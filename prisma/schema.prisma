@@ -1,0 +1,193 @@
+// 売り場バトン:データの形
+// 設計の理由は docs/03_DB設計.md にまとめている。
+// Prisma で書けない制約(CHECK・行レベルセキュリティ)は
+// prisma/migrations の SQL に手で足している。
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+/// スタッフの役割。イベントスタッフの記録には印をつける
+enum StaffRole {
+  REGULAR // 常勤
+  EVENT // イベントスタッフ
+
+  @@map("staff_role")
+}
+
+/// お客様の温度感(4段階のどれか1つ)
+enum Temperature {
+  POSITIVE // 前向き
+  CONSIDERING // 検討中
+  COMPARING // 他社と比較中
+  NOT_NOW // 今回は見送り
+
+  @@map("temperature")
+}
+
+/// 次にやることの種類。OTHER のときだけ自由記入が必須
+enum NextActionKind {
+  QUOTE // 見積もりを渡す
+  FAMILY // 家族と相談
+  DOCUMENTS // 書類を持って再来店
+  STOCK // 入荷・在庫の連絡
+  CALLBACK // こちらから連絡
+  OTHER // その他(自由記入)
+
+  @@map("next_action_kind")
+}
+
+model Store {
+  id        Int        @id @default(autoincrement())
+  name      String     @db.VarChar(100)
+  createdAt DateTime   @default(now()) @map("created_at") @db.Timestamptz(3)
+  staff     Staff[]
+  customers Customer[]
+
+  @@map("stores")
+}
+
+model Staff {
+  id        Int       @id @default(autoincrement())
+  storeId   Int       @map("store_id")
+  name      String    @db.VarChar(50)
+  role      StaffRole
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  store            Store        @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  visits           Visit[]
+  completedActions NextAction[] @relation("CompletedBy")
+
+  @@unique([storeId, name])
+  @@map("staff")
+}
+
+model Customer {
+  id         String   @id @default(uuid()) @db.Uuid
+  storeId    Int      @map("store_id")
+  /// 全角カタカナに揃えて保存する(ひらがな・半角で入れても同じ人が探せるように)
+  nameKana   String   @map("name_kana") @db.VarChar(60)
+  /// 電話番号は下4桁だけ持つ(個人情報を最小限にする)
+  phoneLast4 String   @map("phone_last4") @db.Char(4)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  store  Store   @relation(fields: [storeId], references: [id], onDelete: Restrict)
+  visits Visit[]
+
+  // 検索は「下4桁で絞る → カナで確かめる」の順が一番多いので、この並び
+  @@index([storeId, phoneLast4, nameKana])
+  @@index([storeId, nameKana])
+  @@map("customers")
+}
+
+/// 接客記録(1回の来店で1件)
+model Visit {
+  id            String      @id @default(uuid()) @db.Uuid
+  customerId    String      @map("customer_id") @db.Uuid
+  /// 案内した人。NOT NULL なので「誰が案内したか」は必ず残る
+  staffId       Int         @map("staff_id")
+  visitedAt     DateTime    @default(now()) @map("visited_at") @db.Timestamptz(3)
+  temperature   Temperature
+  memo          String?     @db.VarChar(500)
+  /// 画面を開いてから保存までの秒数
+  inputSeconds  Int         @map("input_seconds")
+  nextVisitDate DateTime?   @map("next_visit_date") @db.Date
+  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  staff       Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
+  topics      VisitTopic[]
+  nextActions NextAction[]
+
+  // お客様カードの時系列(新しい順)
+  @@index([customerId, visitedAt(sort: Desc)])
+  // 今日・今週の来店予定
+  @@index([nextVisitDate])
+  @@index([staffId])
+  @@map("visits")
+}
+
+/// 用件の目録(機種変更・のりかえ など)
+model Topic {
+  id        Int    @id @default(autoincrement())
+  code      String @unique @db.VarChar(30)
+  label     String @db.VarChar(30)
+  sortOrder Int    @map("sort_order")
+
+  checklistItems ChecklistItem[]
+  visitTopics    VisitTopic[]
+
+  @@map("topics")
+}
+
+/// 用件ごとの「案内すること」の目録
+model ChecklistItem {
+  id        Int    @id @default(autoincrement())
+  topicId   Int    @map("topic_id")
+  label     String @db.VarChar(40)
+  sortOrder Int    @map("sort_order")
+
+  topic       Topic        @relation(fields: [topicId], references: [id], onDelete: Restrict)
+  visitChecks VisitCheck[]
+
+  @@unique([topicId, label])
+  // visit_checks から (id, topic_id) の組で参照するための一意制約
+  @@unique([id, topicId])
+  @@map("checklist_items")
+}
+
+/// 記録と用件の中間表(1回の来店で用件は複数選べる)
+model VisitTopic {
+  visitId String @map("visit_id") @db.Uuid
+  topicId Int    @map("topic_id")
+
+  visit  Visit        @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  topic  Topic        @relation(fields: [topicId], references: [id], onDelete: Restrict)
+  checks VisitCheck[]
+
+  @@id([visitId, topicId])
+  @@index([topicId])
+  @@map("visit_topics")
+}
+
+/// 記録と「案内したこと」の中間表
+/// (visit_id, topic_id) を visit_topics に、(checklist_item_id, topic_id) を checklist_items に
+/// つないでいるので「選んでいない用件の項目にチェックがつく」ことをDBが止める
+model VisitCheck {
+  visitId         String @map("visit_id") @db.Uuid
+  topicId         Int    @map("topic_id")
+  checklistItemId Int    @map("checklist_item_id")
+
+  visitTopic    VisitTopic    @relation(fields: [visitId, topicId], references: [visitId, topicId], onDelete: Cascade)
+  checklistItem ChecklistItem @relation(fields: [checklistItemId, topicId], references: [id, topicId], onDelete: Restrict)
+
+  @@id([visitId, checklistItemId])
+  @@index([checklistItemId, topicId])
+  @@map("visit_checks")
+}
+
+/// 次にやること(1件の記録に複数)。done_at が空なら未完了
+model NextAction {
+  id            String         @id @default(uuid()) @db.Uuid
+  visitId       String         @map("visit_id") @db.Uuid
+  kind          NextActionKind
+  /// OTHER のときの自由記入(CHECK 制約で必須にしている)
+  note          String?        @db.VarChar(100)
+  doneAt        DateTime?      @map("done_at") @db.Timestamptz(3)
+  doneByStaffId Int?           @map("done_by_staff_id")
+  createdAt     DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  visit  Visit  @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  doneBy Staff? @relation("CompletedBy", fields: [doneByStaffId], references: [id], onDelete: Restrict)
+
+  @@index([visitId])
+  // 「終わっていない次にやること」の一覧用
+  @@index([doneAt])
+  @@map("next_actions")
+}
