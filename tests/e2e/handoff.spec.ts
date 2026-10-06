@@ -80,3 +80,15 @@ test("今のスタッフを選ばないと保存できない", async ({ page, co
   await expect(page.getByText("画面上部で「今のスタッフ」を選んでください")).toBeVisible();
   await expect(page.getByRole("button", { name: /保存/ })).toBeDisabled();
 });
+
+test("新規で入れた人が登録済みなら、候補を出して選び直せる", async ({ page }) => {
+  await page.goto("/record");
+  await page.getByRole("button", { name: "＋ 新規のお客様" }).click();
+  // seed の「ハヤシ ソウタ」(下4桁 0817)
+  await page.getByLabel("お名前カナ").fill("はやし");
+  await page.getByLabel("電話番号の下4桁").fill("0817");
+  await expect(page.getByText("登録済みかもしれません")).toBeVisible();
+  await page.getByRole("button", { name: /ハヤシ ソウタ/ }).click();
+  await expect(page.getByRole("button", { name: "変える" })).toBeVisible();
+  await expect(page.getByText("ハヤシ ソウタ")).toBeVisible();
+});

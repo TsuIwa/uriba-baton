@@ -1,36 +1,95 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 売り場バトン
 
-## Getting Started
+**携帯売り場の接客を、30秒の記録で次のスタッフへ引き継ぐWebアプリ。**
 
-First, run the development server:
+<!-- スクショは後で差し込む:左から「記録する」「お客様カード」「今日の一覧」(スマホ縦) -->
+| 記録する | お客様カード | 今日の一覧 |
+|---|---|---|
+| (スクショ) | (スクショ) | (スクショ) |
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+## この作品の流れ
+
+| 段階 | やったこと | 文書 |
+|---|---|---|
+| 1. ヒアリング | 携帯売り場で14年働く人に4つ聞いた | [01_ヒアリング](docs/01_ヒアリング.md) |
+| 2. 要件 | 困りごと・やること/やらないこと・完成の基準 | [02_要件](docs/02_要件.md) |
+| 3. DB設計 | 正規化した9テーブル・ER図・制約の理由・迷った所 | [03_DB設計](docs/03_DB設計.md) |
+| 4. 実装 | Next.js + TypeScript + Prisma + Supabase。AIとの分担と直した所 | [04_AIとの作業記録](docs/04_AIとの作業記録.md) |
+| 5. テスト | 単体35本・DB統合10本・画面3本・CI | [05_テストと確かめ](docs/05_テストと確かめ.md) |
+| 6. 改善 | 入力秒数を記録して「30秒以内」を数字で見る → 使ってもらって直す | 下の「今後の改善」 |
+
+## 困りごと
+
+ヒアリングで返ってきた言葉(原文):
+
+> お客様が前回だれに何を聞いたか分からない、週末イベントスタッフが案内していて、さっくりした内容しか案内していない上に誰が案内しているかわからないことがある、最初から説明をしないといけない
+
+記録は紙のメモ。一番困るのは、臨機応変が苦手なスタッフ。欲しいのは「時間をほぼ取らない引き継ぎツール」。
+
+## 作ったもの
+
+- **30秒で残せる記録**:お客様 → 用件 → 案内したこと → 温度感 → 次にやること → 次回来店予定。全部タップ。担当者は画面上部の「今のスタッフ」から自動で入る
+- **入力秒数の記録**:画面を開いてから保存までの秒数を毎回保存。平均と「30秒以内の割合」を、常勤・イベントスタッフに分けて出す
+- **お客様カード**:名前カナか電話番号の下4桁で探す。一番上に
+  「前回 10/3(土) 森田 陽菜(イベント)が「のりかえ(MNP)」で 料金比較・端末価格 まで案内済み。次は 下取り・キャンペーン から。」
+  その下に「話す順のヒント」3つ、その下に過去の記録
+- **今日の一覧**:今日・今週の来店予定と、終わっていない「次にやること」
+- **イベントスタッフの印**:誰が案内した記録か一目で分かる
+
+要約とヒントはAIを使わず、決まったルールで組み立てている(同じ記録なら毎回同じ文になり、理由を説明できる)。
+
+## 技術
+
+| 分野 | 使ったもの |
+|---|---|
+| 画面 | Next.js 16(App Router・Server Actions)・React 19・TypeScript(strict)・Tailwind CSS 4 |
+| DB | PostgreSQL 17(Supabase をローカルで起動)・Prisma 7 |
+| テスト | Vitest(単体・DB統合)・Playwright(スマホ画面の通しテスト) |
+| CI | GitHub Actions(lint・型チェック・テスト・build、PostgreSQL を立てて統合テストと画面テスト) |
+| 開発 | Claude Code |
+
+## DB設計
+
+用件を配列でなく中間表にした理由、電話番号を下4桁だけにした理由、選んでいない用件の項目にチェックがつくのを組の外部キーでDBが止める仕組み、などは **[docs/03_DB設計.md](docs/03_DB設計.md)** にER図と一緒にまとめた。
+
+```
+stores ─┬─ staff ─────────────┐
+        └─ customers ─ visits ┴─┬─ visit_topics ─ visit_checks
+                                └─ next_actions
+topics ─ checklist_items(用件と案内項目の目録)
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## 動かし方
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+必要なもの:Node.js 20.19 以上(24 で確認)・Docker Desktop・Supabase CLI
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm install
+cp .env.example .env          # ローカルの Supabase の既定値が入っている
+supabase start                # Docker 上で Postgres などが立ち上がる
+npm run db:generate           # Prisma のクライアントを作る
+npm run db:deploy             # テーブルを作る
+npm run db:seed               # 見本データ(作り物)を入れる
+npm run dev                   # http://localhost:3000
+```
 
-## Learn More
+スマホの大きさで見るときは、ブラウザの開発者ツールでスマホ表示にする。最初に画面上部で「今のスタッフ」を選ぶ。
 
-To learn more about Next.js, take a look at the following resources:
+見本データは架空の店「サンプルモバイル 中央店」、スタッフ5人(常勤3・イベント2)、お客様20人、記録47件。店名・人名はすべて作り物。`npm run db:seed` は流すたびに中身を入れ直す。
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### テスト
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```bash
+npm test             # 単体テスト(DBなし)
+npm run test:db      # DB統合テスト(supabase start と seed が先)
+npm run test:e2e     # 画面の通しテスト(同上。dev サーバーは自動で立つ)
+npm run lint && npm run typecheck && npm run build
+```
 
-## Deploy on Vercel
+## 今後の改善
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+1. **売り場で使ってもらう**:入力秒数の平均と「30秒以内の割合」を見て、時間がかかっている段を減らす。特にイベントスタッフの数字を見る
+2. **ログイン**:Supabase Auth でスタッフごとにログインし、「今のスタッフ」を置き換える(今は共用端末を想定した切り替え式)
+3. **重複したお客様をまとめる**:同じ瞬間の新規登録は二重になりうる(05 に書いた)
+4. **記録の修正**:履歴を残す形で
+5. **公開**:Vercel と Supabase(本番)へ。持ち主の確認のあと

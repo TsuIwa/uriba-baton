@@ -97,6 +97,22 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
     };
   }, [query, customer, isNew]);
 
+  // 新規で入れている人が、もう登録されていないか(二重登録を防ぐため候補を見せる)
+  const [sameOnes, setSameOnes] = useState<CustomerOption[]>([]);
+  useEffect(() => {
+    if (!isNew || newLast4.length !== 4) return;
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      const found = await findCustomers(`${newKana} ${newLast4}`);
+      if (!cancelled) setSameOnes(found);
+    }, 250);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [isNew, newKana, newLast4]);
+  const duplicates = isNew && newLast4.length === 4 ? sameOnes : [];
+
   // 2〜6
   const [topicIds, setTopicIds] = useState<number[]>(initialTopicIds);
   const [itemIds, setItemIds] = useState<number[]>([]);
@@ -201,6 +217,28 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
               className="min-h-12 w-full rounded-xl border border-brand-line px-3 text-base"
             />
             <p className="text-xs text-slate-500">電話番号は下4桁だけ残します(全部は保存しません)。</p>
+            {duplicates.length > 0 ? (
+              <div className="rounded-xl bg-accent-soft p-3" role="status">
+                <p className="mb-2 text-sm font-bold text-accent">登録済みかもしれません。同じ方ならタップ:</p>
+                <ul className="space-y-1">
+                  {duplicates.map((o) => (
+                    <li key={o.id}>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCustomer(o);
+                          setIsNew(false);
+                        }}
+                        className="flex min-h-12 w-full items-center justify-between rounded-lg bg-white px-3 text-left"
+                      >
+                        <span className="font-bold">{o.nameKana}</span>
+                        <span className="text-xs text-slate-500">下4桁 {o.phoneLast4}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
             <button type="button" onClick={() => setIsNew(false)} className="min-h-11 text-sm text-brand underline">
               登録済みのお客様から探す
             </button>
