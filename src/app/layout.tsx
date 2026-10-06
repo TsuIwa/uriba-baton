@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import Link from "next/link";
+import { connection } from "next/server";
 import { getActiveStaff, getStore } from "@/lib/queries";
 import { getCurrentStaff } from "@/lib/session";
 import { NavBar } from "./_components/NavBar";
@@ -18,6 +19,8 @@ export const viewport: Viewport = {
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
+  // 全画面がDBを読むので、build 時に先読み(プリレンダー)させず、毎回リクエスト時に描く
+  await connection();
   const store = await getStore();
   const staff = store ? await getActiveStaff(store.id) : [];
   const current = store ? await getCurrentStaff(store.id) : null;
