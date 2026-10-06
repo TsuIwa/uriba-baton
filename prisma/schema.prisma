@@ -82,6 +82,9 @@ model Customer {
 
   // 検索は「下4桁で絞る → カナで確かめる」の順が一番多いので、この並び
   @@index([storeId, phoneLast4, nameKana])
+  // カナだけの前方一致(LIKE 'カト%')用。実際のDBでは varchar_pattern_ops 付きで作っている
+  // (migrations/20261006120037_kana_prefix_index)。Prisma 7.10 はスキーマに ops を書くと
+  // 毎回この索引を作り直すマイグレーションを出すため、スキーマ側は素の形で書いている
   @@index([storeId, nameKana])
   @@map("customers")
 }
