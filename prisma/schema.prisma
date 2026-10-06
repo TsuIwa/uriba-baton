@@ -20,6 +20,15 @@ enum StaffRole {
   @@map("staff_role")
 }
 
+/// 記録の出どころ。画面の「記録にかかった時間」は MANUAL(人が画面で入れた分)だけで集計する
+enum VisitSource {
+  MANUAL // 人が画面で入れた
+  SEED // 見本データ(作り物)
+  E2E // 自動テストが画面で入れた
+
+  @@map("visit_source")
+}
+
 /// お客様の温度感(4段階のどれか1つ)
 enum Temperature {
   POSITIVE // 前向き
@@ -91,17 +100,23 @@ model Customer {
 
 /// 接客記録(1回の来店で1件)
 model Visit {
-  id            String      @id @default(uuid()) @db.Uuid
-  customerId    String      @map("customer_id") @db.Uuid
+  id               String      @id @default(uuid()) @db.Uuid
+  customerId       String      @map("customer_id") @db.Uuid
   /// 案内した人。NOT NULL なので「誰が案内したか」は必ず残る
-  staffId       Int         @map("staff_id")
-  visitedAt     DateTime    @default(now()) @map("visited_at") @db.Timestamptz(3)
-  temperature   Temperature
-  memo          String?     @db.VarChar(500)
+  staffId          Int         @map("staff_id")
+  /// 記録した時点の役割。後で常勤になっても、過去の記録の「イベント」の印と集計は変わらない
+  staffRoleAtVisit StaffRole   @map("staff_role_at_visit")
+  /// 記録の出どころ(見本・自動テスト・人)
+  source           VisitSource @default(MANUAL)
+  /// 記録画面を開いたときに発行する送信ID。同じIDの再送は1件にまとめる(二重送信の防止)
+  requestId        String      @unique @default(dbgenerated("gen_random_uuid()")) @map("request_id") @db.Uuid
+  visitedAt        DateTime    @default(now()) @map("visited_at") @db.Timestamptz(3)
+  temperature      Temperature
+  memo             String?     @db.VarChar(500)
   /// 画面を開いてから保存までの秒数
-  inputSeconds  Int         @map("input_seconds")
-  nextVisitDate DateTime?   @map("next_visit_date") @db.Date
-  createdAt     DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  inputSeconds     Int         @map("input_seconds")
+  nextVisitDate    DateTime?   @map("next_visit_date") @db.Date
+  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   staff       Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)

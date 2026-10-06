@@ -13,6 +13,7 @@ const ctx: ParseContext = {
 };
 
 const base = {
+  requestId: "7d1c2b9e-3f4a-4b6c-8d2e-1a0b9c8d7e6f",
   customer: { kind: "existing", id: "0b6f6a3e-6f1e-4c55-9a43-2a4f3c1d9e10" },
   topicIds: [1],
   checklistItemIds: [10],
@@ -53,16 +54,18 @@ describe("parseVisitInput", () => {
     );
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.errors).toContain("名前はカナで入れてください");
-    expect(r.errors).toContain("電話番号の下4桁は数字4つで入れてください");
+    expect(r.errors).toContain(
+      "お客様:名前はカナかひらがなで入れてください(漢字・英字・数字・記号は使えません)",
+    );
+    expect(r.errors).toContain("お客様:電話番号の下4桁は、数字をちょうど4つ入れてください");
   });
 
   it("用件なし・温度感なしはエラー", () => {
     const r = parseVisitInput({ ...base, topicIds: [], checklistItemIds: [], temperature: "" }, ctx);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(r.errors).toContain("用件を1つ以上選んでください");
-    expect(r.errors).toContain("お客様の温度感を選んでください");
+    expect(r.errors).toContain("用件:1つ以上選んでください");
+    expect(r.errors).toContain("温度感:4つのうち1つを選んでください");
   });
 
   it("選んでいない用件の項目にチェックがあればエラー", () => {
@@ -91,5 +94,46 @@ describe("parseVisitInput", () => {
   it("中身が空っぽでも落ちずにエラーを返す", () => {
     const r = parseVisitInput(null, ctx);
     expect(r.ok).toBe(false);
+  });
+
+  it("送信IDがなければ断る(二重送信を防ぐため)", () => {
+    const r = parseVisitInput({ ...base, requestId: undefined }, ctx);
+    expect(r.ok).toBe(false);
+    const ok = parseVisitInput(base, ctx);
+    expect(ok.ok && ok.value.requestId).toBe(base.requestId);
+  });
+
+  it("ない日付(2027-02-30)は、どこを直すか分かる文で断る", () => {
+    const r = parseVisitInput({ ...base, nextVisitDate: "2027-02-30" }, ctx);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors).toEqual(["次回来店予定:「2027-02-30」はない日付です。日付を選び直してください"]);
+    // うるう年の2/29は通る
+    expect(parseVisitInput({ ...base, nextVisitDate: "2028-02-29" }, { ...ctx, today: "2027-12-01" }).ok).toBe(true);
+  });
+
+  it("名前カナはDBと同じ60文字まで", () => {
+    const at = (n: number) => ({ ...base, customer: { kind: "new", nameKana: "ア".repeat(n), phoneLast4: "1234" } });
+    expect(parseVisitInput(at(60), ctx).ok).toBe(true);
+    const r = parseVisitInput(at(61), ctx);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.errors).toEqual(["お客様:名前は60文字以内にしてください(今61文字)"]);
+  });
+
+  it("メモ・「その他」の中身は黙って切らずに、長すぎると伝える", () => {
+    const memo = parseVisitInput({ ...base, memo: "あ".repeat(501) }, ctx);
+    expect(memo.ok).toBe(false);
+    if (!memo.ok) expect(memo.errors[0]).toContain("メモ:500文字以内");
+    const other = parseVisitInput({ ...base, actions: ["OTHER"], otherNote: "あ".repeat(101) }, ctx);
+    expect(other.ok).toBe(false);
+    if (!other.ok) expect(other.errors[0]).toContain("100文字以内");
+  });
+
+  it("エラーはどの欄の話か分かるよう、欄の名前から始まる", () => {
+    const r = parseVisitInput({ requestId: base.requestId, customer: {}, inputSeconds: 1 }, ctx);
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    for (const e of r.errors) expect(e).toMatch(/^(お客様|用件|温度感):/);
   });
 });

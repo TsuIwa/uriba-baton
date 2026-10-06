@@ -38,7 +38,7 @@ function ActionList({ actions, canComplete }: { actions: OpenAction[]; canComple
             <div className="font-bold">{nextActionText(a.kind as NextActionKindCode, a.note)}</div>
             <div className="truncate text-xs text-slate-600">
               {a.visit.customer.nameKana}・{formatJstShort(a.visit.visitedAt)}{" "}
-              <StaffName name={a.visit.staff.name} role={a.visit.staff.role} />
+              <StaffName name={a.visit.staff.name} role={a.visit.staffRoleAtVisit} />
             </div>
           </Link>
           {canComplete ? <ActionDoneButton actionId={a.id} /> : null}
@@ -76,7 +76,7 @@ export default async function TodayPage() {
             <Pill key={t.topicId}>{t.topic.label}</Pill>
           ))}
           <span className="ml-1">
-            前回 <StaffName name={v.staff.name} role={v.staff.role} />
+            前回 <StaffName name={v.staff.name} role={v.staffRoleAtVisit} />
           </span>
         </div>
       </Link>
@@ -127,11 +127,23 @@ export default async function TodayPage() {
       </Section>
 
       <Section title="記録にかかった時間" note="直近30日・目標30秒以内">
-        <div className="grid grid-cols-3 gap-2">
-          <SecondsStat label="全体の平均" s={board.stats.all} />
-          <SecondsStat label="常勤" s={board.stats.regular} />
-          <SecondsStat label="イベント" s={board.stats.event} />
-        </div>
+        {board.stats.all.count === 0 ? (
+          <p className="rounded-xl bg-brand-soft p-3 text-sm font-bold text-brand">
+            まだ実測なし。人が画面で記録すると、ここに平均の秒数が出ます。
+          </p>
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            <SecondsStat label="実測の平均" s={board.stats.all} />
+            <SecondsStat label="常勤" s={board.stats.regular} />
+            <SecondsStat label="イベント" s={board.stats.event} />
+          </div>
+        )}
+        {board.stats.sample.count > 0 ? (
+          <p className="mt-2 text-xs text-slate-500">
+            見本値(参考・作り物のデータ):平均 {board.stats.sample.average}秒・{board.stats.sample.count}件。
+            実測の集計には入れていません。
+          </p>
+        ) : null}
       </Section>
     </div>
   );

@@ -55,6 +55,7 @@ const latestVisitSelect = {
   select: {
     visitedAt: true,
     temperature: true,
+    staffRoleAtVisit: true,
     staff: { select: { name: true, role: true } },
     topics: { select: { topic: { select: { label: true, sortOrder: true } } } },
   },
@@ -121,7 +122,8 @@ export type CustomerCard = NonNullable<Awaited<ReturnType<typeof getCustomerCard
 export function toHandoffVisits(card: CustomerCard): HandoffVisit[] {
   return card.visits.map((v) => ({
     visitedAt: v.visitedAt,
-    staff: { name: v.staff.name, role: v.staff.role as StaffRoleCode },
+    // 印は「記録した時点の役割」で出す(後で役割が変わっても過去の記録は変わらない)
+    staff: { name: v.staff.name, role: v.staffRoleAtVisit as StaffRoleCode },
     temperature: v.temperature as TemperatureCode,
     topics: v.topics.map((t) => ({ code: t.topic.code, label: t.topic.label })),
     checkedItemIds: v.topics.flatMap((t) => t.checks.map((c) => c.checklistItemId)),
@@ -135,7 +137,8 @@ export function toHandoffVisits(card: CustomerCard): HandoffVisit[] {
  * 今日の一覧。
  * - 来店予定:今日〜今週日曜までに次回来店予定日があるお客様(最新の記録の予定だけを見る)
  * - 終わっていない「次にやること」
- * - 入力秒数の集計(直近30日)
+ * - 入力秒数の集計(直近30日)。人が画面で入れた記録(MANUAL)と見本(SEED)は分けて数える。
+ *   自動テストが入れた記録(E2E)はどちらにも入れない
  */
 export async function getTodayBoard(storeId: number, now: Date) {
   const today = jstDateString(now);
@@ -167,8 +170,10 @@ export async function getTodayBoard(storeId: number, now: Date) {
   const since = ymdToDbDate(addDays(today, -30));
   const recent = await prisma.visit.findMany({
     where: { customer: { storeId }, visitedAt: { gte: since } },
-    select: { inputSeconds: true, staff: { select: { role: true } } },
+    select: { inputSeconds: true, staffRoleAtVisit: true, source: true },
   });
+  const manual = recent.filter((r) => r.source === "MANUAL");
+  const sample = recent.filter((r) => r.source === "SEED");
 
   return {
     today,
@@ -177,28 +182,72 @@ export async function getTodayBoard(storeId: number, now: Date) {
     scheduledThisWeek: scheduled.filter((v) => v.nextVisitYmd > today),
     openActions,
     stats: {
-      all: summarizeInputSeconds(recent.map((r) => r.inputSeconds)),
+      // 人が画面で入れた分だけ(実測)
+      all: summarizeInputSeconds(manual.map((r) => r.inputSeconds)),
       regular: summarizeInputSeconds(
-        recent.filter((r) => r.staff.role === "REGULAR").map((r) => r.inputSeconds),
+        manual.filter((r) => r.staffRoleAtVisit === "REGULAR").map((r) => r.inputSeconds),
       ),
       event: summarizeInputSeconds(
-        recent.filter((r) => r.staff.role === "EVENT").map((r) => r.inputSeconds),
+        manual.filter((r) => r.staffRoleAtVisit === "EVENT").map((r) => r.inputSeconds),
       ),
+      // 見本データの作り物の秒数(参考)
+      sample: summarizeInputSeconds(sample.map((r) => r.inputSeconds)),
     },
   };
 }
 
 export class DomainError extends Error {}
 
+export type VisitSourceCode = "MANUAL" | "SEED" | "E2E";
+
+/** 送信IDで、もう保存済みの記録を探す(別の店の記録なら断る) */
+async function findByRequestId(storeId: number, requestId: string) {
+  const v = await prisma.visit.findUnique({
+    where: { requestId },
+    select: { id: true, customerId: true, customer: { select: { storeId: true } } },
+  });
+  if (!v) return null;
+  if (v.customer.storeId !== storeId) throw new DomainError("送信IDが別の店の記録と重なっています");
+  return { visitId: v.id, customerId: v.customerId, duplicated: true };
+}
+
+function isUniqueViolation(e: unknown): boolean {
+  return typeof e === "object" && e !== null && (e as { code?: unknown }).code === "P2002";
+}
+
 /**
  * 記録を1件保存する。お客様(新規なら)・記録・用件・案内したこと・次にやることを
  * 1つのトランザクションでまとめて入れる(途中で失敗したら全部なかったことになる)。
+ *
+ * 二重送信:同じ送信IDが来たら、新しく作らず保存済みの1件を返す。
+ * 2つが同時に届いたときは、DBの一意制約で後の方が失敗するので、そこで保存済みの1件を探し直す。
  */
 export async function createVisit(
   storeId: number,
   staffId: number,
   input: VisitInput,
   now: Date = new Date(),
+  source: VisitSourceCode = "MANUAL",
+): Promise<{ visitId: string; customerId: string; duplicated: boolean }> {
+  const already = await findByRequestId(storeId, input.requestId);
+  if (already) return already;
+  try {
+    return await insertVisit(storeId, staffId, input, now, source);
+  } catch (e) {
+    if (isUniqueViolation(e)) {
+      const saved = await findByRequestId(storeId, input.requestId);
+      if (saved) return saved;
+    }
+    throw e;
+  }
+}
+
+async function insertVisit(
+  storeId: number,
+  staffId: number,
+  input: VisitInput,
+  now: Date,
+  source: VisitSourceCode,
 ) {
   return prisma.$transaction(async (tx) => {
     const staff = await tx.staff.findFirst({ where: { id: staffId, storeId, isActive: true } });
@@ -227,6 +276,9 @@ export async function createVisit(
       data: {
         customerId,
         staffId,
+        staffRoleAtVisit: staff.role,
+        source,
+        requestId: input.requestId,
         visitedAt: now,
         temperature: input.temperature,
         memo: input.memo,
@@ -247,7 +299,7 @@ export async function createVisit(
         data: input.actions.map((a) => ({ visitId: visit.id, kind: a.kind, note: a.note })),
       });
     }
-    return { visitId: visit.id, customerId };
+    return { visitId: visit.id, customerId, duplicated: false };
   });
 }
 
@@ -263,6 +315,9 @@ export async function completeNextAction(
   staffId: number,
   now: Date = new Date(),
 ): Promise<boolean> {
+  // 済みにする人が、この店のスタッフか確かめる(別の店の人の名前で残さない)
+  const staff = await prisma.staff.findFirst({ where: { id: staffId, storeId, isActive: true } });
+  if (!staff) throw new DomainError("この店のスタッフではありません");
   const result = await prisma.nextAction.updateMany({
     where: { id: actionId, doneAt: null, visit: { customer: { storeId } } },
     data: { doneAt: now, doneByStaffId: staffId },

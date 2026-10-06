@@ -17,7 +17,7 @@ async function chooseStaff(page: Page, label: string) {
 
 test("イベントスタッフの記録を、常勤が続きから引き継げる", async ({ page }) => {
   await page.goto("/");
-  await chooseStaff(page, "森田 陽菜(イベント)");
+  await chooseStaff(page, "森田 陽菜");
 
   // 1人目:新規のお客様を記録
   await page.getByRole("link", { name: "記録する", exact: true }).click();
@@ -71,6 +71,8 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
   // 今日の一覧:明日の予定は新しい記録で上書きされたので、終わっていない約束にも出ない
   await page.getByRole("link", { name: "今日", exact: true }).click();
   await expect(page.getByText("記録にかかった時間")).toBeVisible();
+  // 見本と自動テストの秒数は実測に混ぜず、見本は「見本値」と書いて分ける
+  await expect(page.getByText(/見本値\(参考/)).toBeVisible();
   await page.screenshot({ path: "test-results/03_今日の一覧.png", fullPage: true });
 });
 

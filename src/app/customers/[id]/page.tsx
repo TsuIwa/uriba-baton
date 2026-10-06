@@ -112,9 +112,11 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
             <li key={v.id} className="border-l-4 border-brand-line pl-3">
               <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
                 <span className="font-bold">{formatJstShort(v.visitedAt)}</span>
-                <StaffName name={v.staff.name} role={v.staff.role} />
+                <StaffName name={v.staff.name} role={v.staffRoleAtVisit} />
                 <span className="text-slate-600">{TEMPERATURE_LABEL[v.temperature as TemperatureCode]}</span>
-                <span className="ml-auto text-xs text-slate-400">入力 {v.inputSeconds}秒</span>
+                <span className="ml-auto text-xs text-slate-400">
+                  {v.source === "MANUAL" ? `入力 ${v.inputSeconds}秒` : v.source === "SEED" ? "見本データ" : "自動テスト"}
+                </span>
               </div>
               {v.topics.map((t) => (
                 <div key={t.topicId} className="mt-1.5">

@@ -82,9 +82,14 @@ export async function saveVisit(raw: unknown): Promise<SaveVisitResult> {
   });
   if (!parsed.ok) return parsed;
 
+  // 自動テストの画面操作で入った記録は E2E として残す(実測の集計に混ぜない)。
+  // サーバーの環境変数で決めるので、画面から送られた値では変えられない
+  const source = process.env.VISIT_SOURCE === "E2E" ? "E2E" : "MANUAL";
+
   let customerId: string;
   try {
-    ({ customerId } = await createVisit(store.id, staff.id, parsed.value));
+    // 同じ送信IDの再送なら、新しく作らず保存済みの1件が返る
+    ({ customerId } = await createVisit(store.id, staff.id, parsed.value, new Date(), source));
   } catch (e) {
     if (e instanceof DomainError) return { ok: false, errors: [e.message] };
     console.error(e);
@@ -101,7 +106,12 @@ export async function markActionDone(formData: FormData) {
   const actionId = String(formData.get("actionId") ?? "");
   if (!staff || !/^[0-9a-f-]{36}$/i.test(actionId)) return;
   // 同時に押されても先の1人だけが残る(false なら誰かが先に済みにしている)
-  await completeNextAction(store.id, actionId, staff.id);
+  try {
+    await completeNextAction(store.id, actionId, staff.id);
+  } catch (e) {
+    if (!(e instanceof DomainError)) throw e;
+    return;
+  }
   revalidatePath("/");
   const back = String(formData.get("back") ?? "");
   if (back.startsWith("/customers/")) revalidatePath(back);

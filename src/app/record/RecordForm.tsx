@@ -64,11 +64,14 @@ function Step({ n, title, note, children }: { n: number; title: string; note?: s
 }
 
 export function RecordForm({ topics, staffName, today, initialCustomer, initialTopicIds, initialNew }: Props) {
-  // 計測の開始時刻。画面が表示された時点で決める
+  // 計測の開始時刻と送信ID。画面が表示された時点で決める
+  // 送信IDは、保存を2回押した・通信が切れて送り直した、でも記録を1件にするために使う
   const startedAt = useRef<number | null>(null);
+  const requestId = useRef<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
     startedAt.current = Date.now();
+    requestId.current = crypto.randomUUID();
     const timer = setInterval(() => {
       if (startedAt.current !== null) setElapsed(elapsedSeconds(startedAt.current, Date.now()));
     }, 1000);
@@ -128,7 +131,13 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
 
   const selectedTopics = topics.filter((t) => topicIds.includes(t.id));
   const hasCustomer = customer !== null || (isNew && newKana.trim() !== "" && newLast4.length === 4);
-  const ready = staffName !== null && hasCustomer && topicIds.length > 0 && temperature !== null;
+  const missing = [
+    staffName === null ? "今のスタッフ" : null,
+    hasCustomer ? null : "お客様",
+    topicIds.length > 0 ? null : "用件",
+    temperature !== null ? null : "温度感",
+  ].filter((m): m is string => m !== null);
+  const ready = missing.length === 0;
 
   function toggleTopic(id: number) {
     const next = toggle(topicIds, id);
@@ -141,6 +150,7 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
   function submit() {
     const seconds = startedAt.current === null ? 0 : elapsedSeconds(startedAt.current, Date.now());
     const payload = {
+      requestId: requestId.current,
       customer: customer
         ? { kind: "existing", id: customer.id }
         : { kind: "new", nameKana: newKana, phoneLast4: newLast4 },
@@ -393,13 +403,16 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
 
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-brand-line bg-white/95 p-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] backdrop-blur">
         <div className="mx-auto max-w-md">
+          {!ready ? (
+            <p className="mb-1.5 truncate text-center text-xs text-slate-500">あと:{missing.join("・")}</p>
+          ) : null}
           <button
             type="button"
             onClick={submit}
             disabled={!ready || pending}
             className="min-h-14 w-full rounded-xl bg-accent text-lg font-bold text-white shadow disabled:bg-slate-300"
           >
-            {pending ? "保存中…" : ready ? "保存する" : "お客様・用件・温度感を選ぶと保存できます"}
+            {pending ? "保存中…" : "保存する"}
           </button>
         </div>
       </div>

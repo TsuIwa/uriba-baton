@@ -3,6 +3,8 @@
 // 日付だけは「流した日」を基準に並べるので、今日の一覧にいつでも中身が出る。
 //
 // 注意:流すたびに全テーブルの中身を消してから入れ直す(ローカル開発用)。
+// 本番などのDBを消さないよう、接続先が自分のPC(localhost)のときだけ動く。
+// 消すのと入れるのは1つのトランザクションなので、途中で失敗したら元のまま残る。
 
 import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -10,10 +12,18 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import type { NextActionKind, StaffRole, Temperature } from "../src/generated/prisma/enums";
 import { TOPIC_CATALOG } from "../src/lib/catalog";
 import { addDays, jstDateString, ymdToDbDate } from "../src/lib/dates";
+import { refuseUnlessLocal } from "../src/lib/local-db";
+
+const refusal = refuseUnlessLocal(process.env.DATABASE_URL);
+if (refusal) {
+  console.error(`seed を止めました:${refusal}`);
+  process.exit(1);
+}
 
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
 });
+type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 
 // 種を固定した乱数(mulberry32)
 function makeRandom(seed: number) {
@@ -57,23 +67,23 @@ const MEMOS = [
 const TEMPS: Temperature[] = ["POSITIVE", "CONSIDERING", "COMPARING", "NOT_NOW"];
 const ACTIONS: NextActionKind[] = ["QUOTE", "FAMILY", "DOCUMENTS", "STOCK", "CALLBACK"];
 
-async function main() {
+async function fill(tx: Tx) {
   // 子のテーブルから順に空にする
-  await prisma.nextAction.deleteMany();
-  await prisma.visitCheck.deleteMany();
-  await prisma.visitTopic.deleteMany();
-  await prisma.visit.deleteMany();
-  await prisma.customer.deleteMany();
-  await prisma.staff.deleteMany();
-  await prisma.checklistItem.deleteMany();
-  await prisma.topic.deleteMany();
-  await prisma.store.deleteMany();
+  await tx.nextAction.deleteMany();
+  await tx.visitCheck.deleteMany();
+  await tx.visitTopic.deleteMany();
+  await tx.visit.deleteMany();
+  await tx.customer.deleteMany();
+  await tx.staff.deleteMany();
+  await tx.checklistItem.deleteMany();
+  await tx.topic.deleteMany();
+  await tx.store.deleteMany();
 
-  const store = await prisma.store.create({ data: { name: "サンプルモバイル 中央店" } });
+  const store = await tx.store.create({ data: { name: "サンプルモバイル 中央店" } });
 
   const staff = [];
   for (const s of STAFF) {
-    staff.push(await prisma.staff.create({ data: { ...s, storeId: store.id } }));
+    staff.push(await tx.staff.create({ data: { ...s, storeId: store.id } }));
   }
   const regulars = staff.filter((s) => s.role === "REGULAR");
   const events = staff.filter((s) => s.role === "EVENT");
@@ -81,7 +91,7 @@ async function main() {
   // 用件と案内項目の目録
   const topics = [];
   for (const [i, t] of TOPIC_CATALOG.entries()) {
-    const topic = await prisma.topic.create({
+    const topic = await tx.topic.create({
       data: {
         code: t.code,
         label: t.label,
@@ -104,7 +114,7 @@ async function main() {
   for (const [ci, nameKana] of CUSTOMER_KANA.entries()) {
     // 下4桁が同じお客様を2人わざと作る(カナで見分けられるか確かめる用)
     const phoneLast4 = ci === 3 || ci === 15 ? "0817" : String(int(0, 9999)).padStart(4, "0");
-    const customer = await prisma.customer.create({
+    const customer = await tx.customer.create({
       data: { storeId: store.id, nameKana, phoneLast4 },
     });
 
@@ -151,10 +161,12 @@ async function main() {
             : null
         : addDays(ymd, int(2, 7));
 
-      const visit = await prisma.visit.create({
+      const visit = await tx.visit.create({
         data: {
           customerId: customer.id,
           staffId: person.id,
+          staffRoleAtVisit: person.role,
+          source: "SEED",
           visitedAt,
           temperature: isLast ? pick(TEMPS) : pick(["CONSIDERING", "COMPARING"] as const),
           memo: rand() < 0.3 ? pick(MEMOS) : null,
@@ -163,22 +175,22 @@ async function main() {
           createdAt: visitedAt,
         },
       });
-      await prisma.visitTopic.createMany({
+      await tx.visitTopic.createMany({
         data: uniqueTopics.map((t) => ({ visitId: visit.id, topicId: t.id })),
       });
-      await prisma.visitCheck.createMany({
+      await tx.visitCheck.createMany({
         data: checks.map((c) => ({ visitId: visit.id, ...c })),
       });
 
       // 前回の「次にやること」は、今回の来店で済んだことにする
       if (prevActions.length > 0) {
-        await prisma.nextAction.updateMany({
+        await tx.nextAction.updateMany({
           where: { id: { in: prevActions.map((a) => a.id) } },
           data: { doneAt: visitedAt, doneByStaffId: person.id },
         });
       }
       const actionKinds = [...new Set(Array.from({ length: int(isLast ? 1 : 0, 2) }, () => pick(ACTIONS)))];
-      prevActions = await prisma.nextAction.createManyAndReturn({
+      prevActions = await tx.nextAction.createManyAndReturn({
         data: actionKinds.map((kind) => ({ visitId: visit.id, kind, createdAt: visitedAt })),
         select: { id: true },
       });
@@ -186,8 +198,13 @@ async function main() {
     }
   }
 
+  return visitCount;
+}
+
+async function main() {
+  const visitCount = await prisma.$transaction((tx) => fill(tx), { timeout: 120_000, maxWait: 10_000 });
   console.log(
-    `seed 完了: 店1・スタッフ${staff.length}人・用件${topics.length}・お客様${CUSTOMER_KANA.length}人・記録${visitCount}件`,
+    `seed 完了: 店1・スタッフ${STAFF.length}人・用件${TOPIC_CATALOG.length}・お客様${CUSTOMER_KANA.length}人・記録${visitCount}件`,
   );
 }
 

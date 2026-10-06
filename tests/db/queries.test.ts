@@ -1,5 +1,6 @@
 // DBを使う統合テスト。
 // 目録(用件・案内項目)は seed で入っている前提。テスト用の店を別に作り、最後に消す。
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import {
@@ -9,12 +10,16 @@ import {
   getCustomerCard,
   getTodayBoard,
   searchCustomers,
+  toHandoffVisits,
 } from "@/lib/queries";
 import type { VisitInput } from "@/lib/visit-input";
 
 let storeId: number;
 let regularId: number;
 let eventId: number;
+// 境界の確かめ用の、もう1つの店
+let otherStoreId: number;
+let otherStaffId: number;
 let mnp: { id: number; items: { id: number }[] };
 let hikari: { id: number; items: { id: number }[] };
 
@@ -22,6 +27,7 @@ const jst = (s: string) => new Date(`${s}+09:00`);
 
 function input(over: Partial<VisitInput> = {}): VisitInput {
   return {
+    requestId: randomUUID(),
     customer: { kind: "new", nameKana: "テスト タロウ", phoneLast4: "9999" },
     topicIds: [mnp.id],
     checks: [{ topicId: mnp.id, checklistItemId: mnp.items[0].id }],
@@ -48,13 +54,19 @@ beforeAll(async () => {
   storeId = store.id;
   regularId = (await prisma.staff.create({ data: { storeId, name: "試験 常勤", role: "REGULAR" } })).id;
   eventId = (await prisma.staff.create({ data: { storeId, name: "試験 イベント", role: "EVENT" } })).id;
+
+  otherStoreId = (await prisma.store.create({ data: { name: "自動テスト用の別の店" } })).id;
+  otherStaffId = (
+    await prisma.staff.create({ data: { storeId: otherStoreId, name: "別店 常勤", role: "REGULAR" } })
+  ).id;
 });
 
 afterAll(async () => {
   // お客様を消すと記録・用件・チェック・次にやることは連鎖して消える
-  await prisma.customer.deleteMany({ where: { storeId } });
-  await prisma.staff.deleteMany({ where: { storeId } });
-  await prisma.store.delete({ where: { id: storeId } });
+  const stores = [storeId, otherStoreId];
+  await prisma.customer.deleteMany({ where: { storeId: { in: stores } } });
+  await prisma.staff.deleteMany({ where: { storeId: { in: stores } } });
+  await prisma.store.deleteMany({ where: { id: { in: stores } } });
   await prisma.$disconnect();
 });
 
@@ -209,10 +221,36 @@ describe("DBの制約が守っていること", () => {
     await expect(prisma.nextAction.create({ data: { visitId, kind: "OTHER" } })).rejects.toThrow();
   });
 
+});
+
+describe("店の境界(DBでは保証していないので、関数側で確かめる)", () => {
   it("別の店のスタッフでは記録できない", async () => {
-    const other = await prisma.staff.findFirst({ where: { storeId: { not: storeId } } });
-    if (!other) return; // seed の店がなければ飛ばす
-    await expect(createVisit(storeId, other.id, input())).rejects.toThrow("今のスタッフ");
+    await expect(createVisit(storeId, otherStaffId, input())).rejects.toThrow("今のスタッフ");
+  });
+
+  it("別の店のお客様には記録できない", async () => {
+    const { customerId } = await createVisit(
+      otherStoreId,
+      otherStaffId,
+      input({ customer: { kind: "new", nameKana: "ベツミセ キャク", phoneLast4: "1010" } }),
+    );
+    await expect(
+      createVisit(storeId, regularId, input({ customer: { kind: "existing", id: customerId } })),
+    ).rejects.toThrow("お客様が見つかりません");
+  });
+
+  it("別の店のスタッフは「済み」にできない", async () => {
+    const { visitId } = await createVisit(
+      storeId,
+      regularId,
+      input({ customer: { kind: "new", nameKana: "キョウカイ ズミ", phoneLast4: "2020" } }),
+    );
+    const action = await prisma.nextAction.findFirstOrThrow({ where: { visitId } });
+    await expect(completeNextAction(storeId, action.id, otherStaffId)).rejects.toThrow("この店のスタッフ");
+    // 別の店の名前で、この店の約束を済みにすることもできない
+    expect(await completeNextAction(otherStoreId, action.id, otherStaffId)).toBe(false);
+    const after = await prisma.nextAction.findUniqueOrThrow({ where: { id: action.id } });
+    expect(after.doneAt).toBeNull();
   });
 });
 
@@ -223,5 +261,71 @@ describe("検索", () => {
     expect(await searchCustomers(storeId, { kana: null, last4: "8888" })).toHaveLength(2);
     const one = await searchCustomers(storeId, { kana: "オナ", last4: "8888" });
     expect(one.map((c) => c.nameKana)).toEqual(["オナジ イチ"]);
+  });
+});
+
+describe("二重送信", () => {
+  it("同じ送信IDを2回送っても、記録は1件", async () => {
+    const same = input({ customer: { kind: "new", nameKana: "ニジュウ ソウシン", phoneLast4: "3030" } });
+    const first = await createVisit(storeId, regularId, same);
+    const second = await createVisit(storeId, regularId, same);
+    expect(first.duplicated).toBe(false);
+    expect(second).toEqual({ ...first, duplicated: true });
+    expect(await prisma.visit.count({ where: { requestId: same.requestId } })).toBe(1);
+    expect(await searchCustomers(storeId, { kana: "ニジュウ", last4: "3030" })).toHaveLength(1);
+  });
+
+  it("同じ送信IDが同時に2つ届いても、記録もお客様も1件", async () => {
+    const same = input({ customer: { kind: "new", nameKana: "ドウジ ソウシン", phoneLast4: "4040" } });
+    const [a, b] = await Promise.all([
+      createVisit(storeId, regularId, same),
+      createVisit(storeId, regularId, same),
+    ]);
+    expect(a.visitId).toBe(b.visitId);
+    expect([a.duplicated, b.duplicated].filter(Boolean)).toHaveLength(1);
+    expect(await prisma.visit.count({ where: { requestId: same.requestId } })).toBe(1);
+    expect(await searchCustomers(storeId, { kana: "ドウジ ソウシン", last4: "4040" })).toHaveLength(1);
+  });
+});
+
+describe("記録時点の役割と、記録の出どころ", () => {
+  it("イベントスタッフが後で常勤になっても、過去の記録の印と集計は変わらない", async () => {
+    const temp = await prisma.staff.create({ data: { storeId, name: "試験 のちに常勤", role: "EVENT" } });
+    const { customerId } = await createVisit(
+      storeId,
+      temp.id,
+      input({ customer: { kind: "new", nameKana: "ヤクワリ ヘンコウ", phoneLast4: "5050" }, inputSeconds: 40 }),
+    );
+    const now = new Date();
+    const before = (await getTodayBoard(storeId, now)).stats.event.count;
+
+    await prisma.staff.update({ where: { id: temp.id }, data: { role: "REGULAR" } });
+
+    const after = (await getTodayBoard(storeId, now)).stats.event.count;
+    expect(after).toBe(before);
+    const card = await getCustomerCard(storeId, customerId);
+    expect(toHandoffVisits(card!)[0].staff.role).toBe("EVENT");
+  });
+
+  it("見本(SEED)と自動テスト(E2E)の秒数は、実測の集計に入らない", async () => {
+    const now = new Date();
+    const base = (await getTodayBoard(storeId, now)).stats;
+    await createVisit(
+      storeId,
+      regularId,
+      input({ customer: { kind: "new", nameKana: "ミホン イチ", phoneLast4: "6060" }, inputSeconds: 999 }),
+      now,
+      "SEED",
+    );
+    await createVisit(
+      storeId,
+      regularId,
+      input({ customer: { kind: "new", nameKana: "ジドウ ニ", phoneLast4: "7070" }, inputSeconds: 888 }),
+      now,
+      "E2E",
+    );
+    const next = (await getTodayBoard(storeId, now)).stats;
+    expect(next.all).toEqual(base.all);
+    expect(next.sample.count).toBe(base.sample.count + 1);
   });
 });

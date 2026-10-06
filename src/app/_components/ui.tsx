@@ -16,7 +16,7 @@ export function Section({ title, children, note }: { title: string; children: Re
 /** イベントスタッフの印(誰が案内したかを一目で) */
 export function EventBadge() {
   return (
-    <span className="ml-1 inline-block rounded bg-accent px-1.5 py-0.5 align-middle text-[11px] font-bold leading-none text-white">
+    <span className="ml-1 inline-block shrink-0 rounded bg-accent px-1.5 py-0.5 align-middle text-[11px] font-bold leading-none text-white">
       イベント
     </span>
   );
