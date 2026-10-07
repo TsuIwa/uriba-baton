@@ -7,13 +7,13 @@ import {
   type HandoffVisit,
 } from "../handoff";
 
-// 目録の一部(id は仮)。キャンペーンは 2026-10-01 に中身が変わった
+// 目録の一部(id は仮)。キャンペーンは 2026-10-01 に中身が変わって版2になった
 const catalog: ChecklistCatalog = {
   MNP: [
     { id: 1, label: "料金比較", volatile: true, revisedOn: null },
     { id: 2, label: "端末価格" },
     { id: 3, label: "下取り" },
-    { id: 4, label: "キャンペーン", volatile: true, revisedOn: "2026-10-01" },
+    { id: 4, label: "キャンペーン", volatile: true, revisedOn: "2026-10-01", version: 2 },
     { id: 5, label: "必要書類" },
   ],
   HIKARI: [
@@ -22,6 +22,8 @@ const catalog: ChecklistCatalog = {
   ],
 };
 const ALL_MNP = [1, 2, 3, 4, 5];
+/** キャンペーンを今の版(2)で説明した */
+const CAMPAIGN_V2 = { 4: 2 };
 
 function visit(over: Partial<HandoffVisit> = {}): HandoffVisit {
   return {
@@ -70,6 +72,7 @@ describe("buildHandoffSummary(基本)", () => {
             { code: "HIKARI", label: "光回線" },
           ],
           checkedItemIds: [...ALL_MNP, 11],
+          explainedVersions: CAMPAIGN_V2,
         }),
       ],
       catalog,
@@ -80,7 +83,13 @@ describe("buildHandoffSummary(基本)", () => {
 
   it("全部済んでいれば、未完了の約束の続きから", () => {
     const s = buildHandoffSummary(
-      [visit({ checkedItemIds: ALL_MNP, actions: [{ kind: "QUOTE", note: null, done: false }] })],
+      [
+        visit({
+          checkedItemIds: ALL_MNP,
+          explainedVersions: CAMPAIGN_V2,
+          actions: [{ kind: "QUOTE", note: null, done: false }],
+        }),
+      ],
       catalog,
     );
     expect(s.text).toContain("これまでに一通り案内済み。次は「見積もりを渡す」の続きから。");
@@ -134,36 +143,37 @@ describe("要約の文が矛盾しない(組み合わせ)", () => {
 
 describe("問1:未完了の「見積もりを渡す」(Codex が再現した例)", () => {
   it("まだなら「見積もりを作りながら案内」、感想は聞かない", () => {
-    const hints = buildTalkHints([visit({ actions: [{ kind: "QUOTE", note: null, done: false }] })], catalog);
-    expect(hints[0]).toBe(QUOTE_OPEN);
-    expect(hints).not.toContain("お渡しした見積もりの感想から聞く");
+    const { extra } = buildTalkHints([visit({ actions: [{ kind: "QUOTE", note: null, done: false }] })], catalog);
+    expect(extra[0]).toBe(QUOTE_OPEN);
+    expect(extra).not.toContain("お渡しした見積もりの感想から聞く");
   });
 
   it("済んでいれば「お渡しした見積もりの感想から聞く」", () => {
-    const hints = buildTalkHints(
+    const { extra } = buildTalkHints(
       [
         visit({
           temperature: "POSITIVE",
           checkedItemIds: ALL_MNP,
+          explainedVersions: CAMPAIGN_V2,
           actions: [{ kind: "QUOTE", note: null, done: true }],
         }),
       ],
       catalog,
     );
-    expect(hints).toContain("お渡しした見積もりの感想から聞く");
-    expect(hints).not.toContain(QUOTE_OPEN);
+    expect(extra).toContain("お渡しした見積もりの感想から聞く");
+    expect(extra).not.toContain(QUOTE_OPEN);
   });
 
   it("ほかの約束も、まだ/済みで文を分ける", () => {
     const open = buildTalkHints([visit({ actions: [{ kind: "CALLBACK", note: null, done: false }] })], catalog);
     const done = buildTalkHints([visit({ actions: [{ kind: "CALLBACK", note: null, done: true }] })], catalog);
-    expect(open[0]).toBe("こちらからの連絡がまだ。連絡するはずだった件から話す");
-    expect(done).toContain("前回こちらから連絡した件から話す");
+    expect(open.extra[0]).toBe("こちらからの連絡がまだ。連絡するはずだった件から話す");
+    expect(done.extra).toContain("前回こちらから連絡した件から話す");
     const other = buildTalkHints(
       [visit({ actions: [{ kind: "OTHER", note: "ケースの取り寄せ", done: false }] })],
       catalog,
     );
-    expect(other[0]).toBe("「ケースの取り寄せ」がまだ済んでいない。その件から話す");
+    expect(other.extra[0]).toBe("「ケースの取り寄せ」がまだ済んでいない。その件から話す");
   });
 });
 
@@ -181,9 +191,9 @@ describe("問2:前回より前の未完了の約束(Codex が再現した例)", 
       "9/25(金) 中村 誠さんの「入荷・在庫の連絡」が未完了のまま。済んでいるか中村 誠さんに確認してから進める。",
     );
     expect(s.staleActions).toHaveLength(1);
-    expect(buildTalkHints(visits, catalog)[0]).toBe(
+    expect(buildTalkHints(visits, catalog).required).toEqual([
       "9/25(金) 中村 誠さんの「入荷・在庫の連絡」が未完了のまま。済んでいるか中村 誠さんに確認してから進める",
-    );
+    ]);
   });
 
   it("同じ日・同じ担当者の未完了は、要約では1文にまとめる", () => {
@@ -230,21 +240,27 @@ describe("問3:説明済みは期限で切らず、理解度と中身の変更�
     expect(s.text).toContain("変更あり:キャンペーン は前回の説明のあとに中身が変わったので必ず案内。");
     expect(s.text).toContain("次は キャンペーン(変更あり)・必要書類 から。");
     expect(s.text).not.toMatch(/説明済み:[^。]*キャンペーン/);
-    expect(buildTalkHints(visits, catalog)[0]).toBe(
+    expect(buildTalkHints(visits, catalog).required).toEqual([
       "変更あり:「キャンペーン」は前回の説明のあとに中身が変わったので必ず案内する",
-    );
+    ]);
   });
 
-  it("改定のあとに説明していれば、ふつうの説明済み", () => {
-    const items = itemStatuses([visit({ checkedItemIds: [4] })], catalog); // 10/3 に説明
+  it("今の版を説明していれば、ふつうの説明済み", () => {
+    const items = itemStatuses([visit({ checkedItemIds: [4], explainedVersions: CAMPAIGN_V2 })], catalog);
     expect(items.find((i) => i.label === "キャンペーン")?.state).toBe("EXPLAINED");
   });
 
-  it("改定日と説明日が同じ日なら、必ず案内する方に倒す", () => {
-    const items = itemStatuses(
-      [visit({ visitedAt: new Date("2026-10-01T03:00:00Z"), checkedItemIds: [4] })],
-      catalog,
-    );
+  it("改定と説明が同じ日でも、日付でなく「どの版を説明したか」で決まる", () => {
+    const sameDay = new Date("2026-10-01T03:00:00Z");
+    const oldVersion = itemStatuses([visit({ visitedAt: sameDay, checkedItemIds: [4], explainedVersions: { 4: 1 } })], catalog);
+    const newVersion = itemStatuses([visit({ visitedAt: sameDay, checkedItemIds: [4], explainedVersions: { 4: 2 } })], catalog);
+    expect(oldVersion.find((i) => i.label === "キャンペーン")?.state).toBe("CHANGED");
+    expect(newVersion.find((i) => i.label === "キャンペーン")?.state).toBe("EXPLAINED");
+  });
+
+  it("説明のあとにまた改定されたら(版2を説明→今は版3)、変更あり", () => {
+    const v3 = { ...catalog, MNP: catalog.MNP.map((i) => (i.id === 4 ? { ...i, version: 3 } : i)) };
+    const items = itemStatuses([visit({ checkedItemIds: [4], explainedVersions: CAMPAIGN_V2 })], v3);
     expect(items.find((i) => i.label === "キャンペーン")?.state).toBe("CHANGED");
   });
 
@@ -254,7 +270,7 @@ describe("問3:説明済みは期限で切らず、理解度と中身の変更�
     expect(s.text).toContain("前回あいまいだった:端末価格 はもう一度詳しく案内。");
     expect(s.text).toContain("次は 端末価格(前回あいまい)・下取り から。");
     expect(s.text).toContain("説明済み:料金比較 はまず理解度を伺い");
-    expect(buildTalkHints(visits, catalog)[0]).toBe("前回あいまいだった「端末価格」をもう一度詳しく案内する");
+    expect(buildTalkHints(visits, catalog).extra[0]).toBe("前回あいまいだった「端末価格」をもう一度詳しく案内する");
   });
 
   it("あいまいだった項目を、あとで分かってもらえたら説明済みに戻る", () => {
@@ -273,10 +289,13 @@ describe("問3:説明済みは期限で切らず、理解度と中身の変更�
 
 describe("buildTalkHints(並びと上限)", () => {
   it("記録がなければ用件を聞くところから", () => {
-    expect(buildTalkHints([], catalog)).toEqual(["用件を聞く(機種変更・のりかえ・光回線など)"]);
+    expect(buildTalkHints([], catalog)).toEqual({
+      required: [],
+      extra: ["用件を聞く(機種変更・のりかえ・光回線など)"],
+    });
   });
 
-  it("前々回の約束 → 前回の約束 → 変更あり の順で、3つまで", () => {
+  it("「担当者に確認」と「変更あり」は必ず枠に全部、補助のヒントは別に3つまで", () => {
     const older = visit({
       visitedAt: new Date("2026-09-25T03:00:00Z"),
       staff: { name: "中村 誠", role: "REGULAR" },
@@ -287,24 +306,52 @@ describe("buildTalkHints(並びと上限)", () => {
       [visit({ checkedItemIds: [1, 2], actions: [{ kind: "QUOTE", note: null, done: false }] }), older],
       catalog,
     );
-    expect(hints).toHaveLength(3);
-    expect(hints[0]).toContain("中村 誠さんに確認してから進める");
-    expect(hints[1]).toBe(QUOTE_OPEN);
-    expect(hints[2]).toBe("変更あり:「キャンペーン」は前回の説明のあとに中身が変わったので必ず案内する");
+    expect(hints.required).toEqual([
+      "9/25(金) 中村 誠さんの「入荷・在庫の連絡」が未完了のまま。済んでいるか中村 誠さんに確認してから進める",
+      "変更あり:「キャンペーン」は前回の説明のあとに中身が変わったので必ず案内する",
+    ]);
+    expect(hints.extra).toHaveLength(3);
+    expect(hints.extra[0]).toBe(QUOTE_OPEN);
+  });
+
+  it("必ずの枠は3件を超えても切らない", () => {
+    const olds = [1, 2, 3, 4].map((n) =>
+      visit({
+        visitedAt: new Date(`2026-09-0${n}T03:00:00Z`),
+        staff: { name: `担当${n}`, role: "REGULAR" },
+        checkedItemIds: [],
+        actions: [{ kind: "CALLBACK", note: null, done: false }],
+      }),
+    );
+    const hints = buildTalkHints([visit({ checkedItemIds: [4] }), ...olds.reverse()], catalog);
+    // 前々回以前の約束4件+変更あり1件 = 5件、全部出る
+    expect(hints.required).toHaveLength(5);
+    expect(hints.extra.length).toBeLessThanOrEqual(3);
   });
 
   it("約束も変更もなければ、温度感と未案内で埋める", () => {
-    expect(buildTalkHints([visit({ temperature: "NOT_NOW" })], catalog)).toEqual([
-      "無理に勧めず、前回から変わったことを聞く",
-      "まだ案内していない「下取り」を説明する",
-      "まだ案内していない「キャンペーン」を説明する",
-    ]);
+    expect(buildTalkHints([visit({ temperature: "NOT_NOW" })], catalog)).toEqual({
+      required: [],
+      extra: [
+        "無理に勧めず、前回から変わったことを聞く",
+        "まだ案内していない「下取り」を説明する",
+        "まだ案内していない「キャンペーン」を説明する",
+      ],
+    });
   });
 
   it("全部説明済みなら、最後に「まず理解度を伺う」が入る", () => {
-    expect(buildTalkHints([visit({ temperature: "POSITIVE", checkedItemIds: ALL_MNP })], catalog)).toEqual([
-      "手続きに進めるか確かめる(かかる時間を先に伝える)",
-      "説明済みの「料金比較・端末価格」は、まず理解度を伺い、必要ならもう一度詳しく案内する",
-    ]);
+    expect(
+      buildTalkHints(
+        [visit({ temperature: "POSITIVE", checkedItemIds: ALL_MNP, explainedVersions: CAMPAIGN_V2 })],
+        catalog,
+      ),
+    ).toEqual({
+      required: [],
+      extra: [
+        "手続きに進めるか確かめる(かかる時間を先に伝える)",
+        "説明済みの「料金比較・端末価格」は、まず理解度を伺い、必要ならもう一度詳しく案内する",
+      ],
+    });
   });
 });

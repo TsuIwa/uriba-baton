@@ -38,7 +38,8 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
   const visits = toHandoffVisits(card);
   const summary = buildHandoffSummary(visits, catalog.checklist);
   const hints = buildTalkHints(visits, catalog.checklist);
-  const savedSeconds = saved && /^\d+$/.test(saved) ? Number(saved) : null;
+  // 入力秒数は測れなかった記録もある("na")
+  const savedSeconds = saved === "na" ? "na" : saved && /^\d+$/.test(saved) ? Number(saved) : null;
   // 前回より前の記録の未完了は「担当者に確認してから」の印をつける
   const latestVisitId = card.visits[0]?.id;
   const openActions = card.visits.flatMap((v) =>
@@ -57,7 +58,7 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
     <div className="space-y-3">
       {savedSeconds !== null ? (
         <p role="status" className="rounded-xl bg-brand p-3 text-center text-sm font-bold text-white">
-          保存しました(入力 {savedSeconds} 秒)
+          {savedSeconds === "na" ? "保存しました" : `保存しました(入力 ${savedSeconds} 秒)`}
         </p>
       ) : null}
 
@@ -80,9 +81,23 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
         </p>
       </section>
 
+      {hints.required.length > 0 ? (
+        <section aria-label="必ず" className="rounded-2xl border-2 border-accent bg-accent-soft p-4">
+          <h2 className="mb-2 text-sm font-bold text-accent">必ず(全部)</h2>
+          <ul className="space-y-2" data-testid="required-hints">
+            {hints.required.map((h) => (
+              <li key={h} className="flex gap-2 font-bold text-slate-800">
+                <span className="text-accent">!</span>
+                <span>{h}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <Section title="話す順のヒント">
         <ol className="space-y-2">
-          {hints.map((h, i) => (
+          {hints.extra.map((h, i) => (
             <li key={h} className="flex gap-3">
               <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-brand text-sm font-bold text-white">
                 {i + 1}
@@ -152,7 +167,15 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
                 <StaffName name={v.staff.name} role={v.staffRoleAtVisit} />
                 <span className="text-slate-600">{TEMPERATURE_LABEL[v.temperature as TemperatureCode]}</span>
                 <span className="ml-auto text-xs text-slate-400">
-                  {v.source === "MANUAL" ? `入力 ${v.inputSeconds}秒` : v.source === "SEED" ? "見本データ" : "自動テスト"}
+                  {v.source === "MANUAL"
+                    ? v.inputSeconds === null
+                      ? "入力 —"
+                      : `入力 ${v.inputSeconds}秒`
+                    : v.source === "SEED"
+                      ? "見本データ"
+                      : v.source === "E2E"
+                        ? "自動テスト"
+                        : "出どころ不明"}
                 </span>
               </div>
               {v.topics.map((t) => (

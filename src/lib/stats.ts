@@ -12,8 +12,9 @@ export type InputSecondsSummary = {
   withinTargetPercent: number | null;
 };
 
-export function summarizeInputSeconds(seconds: number[]): InputSecondsSummary {
-  const values = seconds.filter((s) => Number.isFinite(s) && s >= 0);
+export function summarizeInputSeconds(seconds: (number | null)[]): InputSecondsSummary {
+  // 測れなかった記録(null)は数えない
+  const values = seconds.filter((s): s is number => s !== null && Number.isFinite(s) && s >= 0);
   if (values.length === 0) {
     return { count: 0, average: null, median: null, withinTargetPercent: null };
   }
@@ -33,10 +34,10 @@ export function summarizeInputSeconds(seconds: number[]): InputSecondsSummary {
 /**
  * 入力にかかった秒数 = 最初の入力(タップ・文字入力)から保存まで。
  * 画面を開いた時からだと、画面を開いたまま接客している時間が混ざるため。
- * 一度も入力していない(=最初の入力の時刻がない)ときは0秒。
+ * 一度も入力していない(=最初の入力の時刻がない)ときは null(測れなかった。0秒として集計に混ぜない)。
  */
-export function inputSeconds(firstInputAtMs: number | null, savedAtMs: number): number {
-  return firstInputAtMs === null ? 0 : elapsedSeconds(firstInputAtMs, savedAtMs);
+export function inputSeconds(firstInputAtMs: number | null, savedAtMs: number): number | null {
+  return firstInputAtMs === null ? null : elapsedSeconds(firstInputAtMs, savedAtMs);
 }
 
 /**

@@ -15,6 +15,8 @@ type Topic = { id: number; code: string; label: string; items: { id: number; lab
 type Props = {
   topics: Topic[];
   staffName: string | null;
+  /** 画面に出している担当者。保存時に「今のスタッフ」と食い違えば、サーバーが断る */
+  staffId: number | null;
   today: string;
   initialCustomer: CustomerOption | null;
   initialTopicIds: number[];
@@ -64,7 +66,15 @@ function Step({ n, title, note, children }: { n: number; title: string; note?: s
   );
 }
 
-export function RecordForm({ topics, staffName, today, initialCustomer, initialTopicIds, initialNew }: Props) {
+export function RecordForm({
+  topics,
+  staffName,
+  staffId,
+  today,
+  initialCustomer,
+  initialTopicIds,
+  initialNew,
+}: Props) {
   // 計測の開始時刻(最初の入力の時)と送信ID(画面が表示された時)
   // 送信IDは、保存を2回押した・通信が切れて送り直した、でも記録を1件にするために使う
   const startedAt = useRef<number | null>(null);
@@ -78,13 +88,7 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
     return () => clearInterval(timer);
   }, []);
 
-  /** 最初の入力で計測を始める(2回目以降は何もしない) */
-  function markStarted() {
-    if (startedAt.current === null) {
-      startedAt.current = Date.now();
-      setElapsed(0);
-    }
-  }
+
 
   // 1. お客様
   const [customer, setCustomer] = useState<CustomerOption | null>(initialCustomer);
@@ -136,6 +140,28 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
   const [memoOpen, setMemoOpen] = useState(false);
   const [memo, setMemo] = useState("");
 
+  // 計測は「入力の値が最初に変わった時」から。タップでもキーボードでも、ここ1か所で拾う
+  // (画面を開いた時からにすると、画面を開いたまま接客している時間が混ざる)
+  const formValues = JSON.stringify([
+    customer?.id ?? null,
+    isNew,
+    newKana,
+    newLast4,
+    query,
+    topicIds,
+    itemIds,
+    unclearIds,
+    temperature,
+    actions,
+    otherNote,
+    nextVisitDate,
+    memo,
+  ]);
+  const initialValues = useRef(formValues);
+  useEffect(() => {
+    if (startedAt.current === null && formValues !== initialValues.current) startedAt.current = Date.now();
+  }, [formValues]);
+
   const [errors, setErrors] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
 
@@ -168,6 +194,7 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
     const seconds = inputSeconds(startedAt.current, Date.now());
     const payload = {
       requestId: requestId.current,
+      staffId,
       customer: customer
         ? { kind: "existing", id: customer.id }
         : { kind: "new", nameKana: newKana, phoneLast4: newLast4 },
@@ -184,7 +211,11 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
     startTransition(async () => {
       const result = await saveVisit(payload);
       // 成功したときはサーバー側でお客様カードへ移るので、ここに来るのは失敗のときだけ
-      if (result && !result.ok) setErrors(result.errors);
+      if (result && !result.ok) {
+        setErrors(result.errors);
+        // 同じ送信IDで中身が変わっていると断られたら、次の保存は新しい記録として送る
+        if (result.code === "REQUEST_CONFLICT") requestId.current = crypto.randomUUID();
+      }
     });
   }
 
@@ -196,14 +227,7 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
   ];
 
   return (
-    // 画面のどこかを最初に触った・打った時から測る(保存ボタンだけは除く)
-    <div
-      className="space-y-3 pb-24"
-      onPointerDownCapture={(e) => {
-        if (!(e.target as HTMLElement).closest("[data-save]")) markStarted();
-      }}
-      onInputCapture={markStarted}
-    >
+    <div className="space-y-3 pb-24">
       <div className="flex items-center justify-between px-1">
         <h1 className="text-lg font-bold">記録する</h1>
         <span className="rounded-full bg-brand-soft px-3 py-1 text-sm font-bold text-brand" aria-live="off">
@@ -457,7 +481,6 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
           ) : null}
           <button
             type="button"
-            data-save
             onClick={submit}
             disabled={!ready || pending}
             className="min-h-14 w-full rounded-xl bg-accent text-lg font-bold text-white shadow disabled:bg-slate-300"

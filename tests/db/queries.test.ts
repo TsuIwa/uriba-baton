@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prisma } from "@/lib/db";
 import {
   completeNextAction,
-  createVisit,
+  createVisit as createVisitRaw,
   getCatalog,
   getCustomerCard,
   getTodayBoard,
@@ -15,6 +15,13 @@ import {
 import type { VisitInput } from "@/lib/visit-input";
 import { buildHandoffSummary, buildTalkHints } from "@/lib/handoff";
 import { ymdToDbDate } from "@/lib/dates";
+
+/**
+ * 多くのテストは「画面の担当者=保存する人」なので、staffId が 0 のときは保存する人で埋める。
+ * 担当者の食い違いを試すテストだけ createVisitRaw を直接呼ぶ
+ */
+const createVisit: typeof createVisitRaw = (store, staff, inp, now, source) =>
+  createVisitRaw(store, staff, { ...inp, staffId: inp.staffId === 0 ? staff : inp.staffId }, now, source);
 
 let storeId: number;
 let regularId: number;
@@ -30,6 +37,7 @@ const jst = (s: string) => new Date(`${s}+09:00`);
 function input(over: Partial<VisitInput> = {}): VisitInput {
   return {
     requestId: randomUUID(),
+    staffId: 0,
     customer: { kind: "new", nameKana: "テスト タロウ", phoneLast4: "9999" },
     topicIds: [mnp.id],
     checks: [{ topicId: mnp.id, checklistItemId: mnp.items[0].id, unclear: false }],
@@ -200,7 +208,7 @@ describe("DBの制約が守っていること", () => {
     // 用件は MNP なのに、光回線の項目を MNP として入れようとする
     await expect(
       prisma.visitCheck.create({
-        data: { visitId, topicId: mnp.id, checklistItemId: hikari.items[0].id },
+        data: { visitId, topicId: mnp.id, checklistItemId: hikari.items[0].id, explainedVersion: 1 },
       }),
     ).rejects.toThrow();
   });
@@ -339,7 +347,11 @@ describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
       where: { topicId: mnp.id, label: "キャンペーン" },
     });
     const price = await prisma.checklistItem.findFirstOrThrow({ where: { topicId: mnp.id, label: "端末価格" } });
-    const before = { isVolatile: camp.isVolatile, contentRevisedOn: camp.contentRevisedOn };
+    const before = {
+      isVolatile: camp.isVolatile,
+      contentRevisedOn: camp.contentRevisedOn,
+      contentVersion: camp.contentVersion,
+    };
 
     try {
       // 9/20 中村…ではなく、テスト用の常勤が「キャンペーン」を説明し、入荷連絡を約束(未完了のまま)
@@ -364,10 +376,10 @@ describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
         }),
         jst("2026-09-27T12:00:00"),
       );
-      // 10/1 にキャンペーンの中身が変わった
+      // 10/1 にキャンペーンの中身が変わった(版を1つ上げる)
       await prisma.checklistItem.update({
         where: { id: camp.id },
-        data: { isVolatile: true, contentRevisedOn: ymdToDbDate("2026-10-01") },
+        data: { isVolatile: true, contentRevisedOn: ymdToDbDate("2026-10-01"), contentVersion: { increment: 1 } },
       });
 
       const catalog = await getCatalog();
@@ -378,9 +390,9 @@ describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
       expect(s.text).toContain("変更あり:キャンペーン");
       expect(s.text).toContain("前回あいまいだった:端末価格");
       const hints = buildTalkHints(visits, catalog.checklist);
-      expect(hints[0]).toContain("試験 常勤さんの「入荷・在庫の連絡」が未完了のまま");
-      expect(hints[1]).toContain("見積もりを作りながら詳細を案内する");
-      expect(hints[2]).toContain("変更あり:「キャンペーン」");
+      expect(hints.required[0]).toContain("試験 常勤さんの「入荷・在庫の連絡」が未完了のまま");
+      expect(hints.required[1]).toContain("変更あり:「キャンペーン」");
+      expect(hints.extra[0]).toContain("見積もりを作りながら詳細を案内する");
     } finally {
       await prisma.checklistItem.update({ where: { id: camp.id }, data: before });
     }
@@ -394,5 +406,59 @@ describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
         data: { contentRevisedOn: ymdToDbDate("2026-10-01") },
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("2周目の審査の直し", () => {
+  it("画面の担当者と保存するときの担当者が違えば、保存しない", async () => {
+    const inp = { ...input({ customer: { kind: "new" as const, nameKana: "タントウ チガイ", phoneLast4: "1212" } }), staffId: eventId };
+    await expect(createVisitRaw(storeId, regularId, inp)).rejects.toThrow("担当者が切り替わっています");
+    expect(await prisma.visit.count({ where: { requestId: inp.requestId } })).toBe(0);
+    expect(await searchCustomers(storeId, { kana: "タントウ", last4: "1212" })).toHaveLength(0);
+  });
+
+  it("同じ送信IDで中身が違う再送は、古い記録を返さずに断る", async () => {
+    const first = input({ customer: { kind: "new", nameKana: "ナカミ チガイ", phoneLast4: "1313" } });
+    await createVisit(storeId, regularId, first);
+    // 押し直し(秒数だけ違う)は同じ内容として1件にまとめる
+    const again = await createVisit(storeId, regularId, { ...first, inputSeconds: 99 });
+    expect(again.duplicated).toBe(true);
+    // 温度感を変えて同じ送信IDで送る → 断る
+    await expect(createVisit(storeId, regularId, { ...first, temperature: "POSITIVE" })).rejects.toThrow(
+      "内容が変わっています。新しい記録として保存し直してください",
+    );
+    expect(await prisma.visit.count({ where: { requestId: first.requestId } })).toBe(1);
+  });
+
+  it("入力秒数が測れなかった記録は null で残り、集計に入らない", async () => {
+    const now = new Date();
+    const base = (await getTodayBoard(storeId, now)).stats.all.count;
+    const { visitId } = await createVisit(
+      storeId,
+      regularId,
+      input({ customer: { kind: "new", nameKana: "ハカレズ", phoneLast4: "1414" }, inputSeconds: null }),
+      now,
+    );
+    expect((await prisma.visit.findUniqueOrThrow({ where: { id: visitId } })).inputSeconds).toBeNull();
+    expect((await getTodayBoard(storeId, now)).stats.all.count).toBe(base);
+  });
+
+  it("説明したときの中身の版が、案内したことと一緒に残る", async () => {
+    const camp = await prisma.checklistItem.findFirstOrThrow({ where: { topicId: mnp.id, label: "キャンペーン" } });
+    const { visitId } = await createVisit(
+      storeId,
+      regularId,
+      input({
+        customer: { kind: "new", nameKana: "バン ノコス", phoneLast4: "1515" },
+        checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false }],
+      }),
+    );
+    const check = await prisma.visitCheck.findFirstOrThrow({ where: { visitId } });
+    expect(check.explainedVersion).toBe(camp.contentVersion);
+  });
+
+  it("同じ名前のスタッフを同じ店に登録できる(名前の一意制約を外した)", async () => {
+    await prisma.staff.create({ data: { storeId, name: "同名 太郎", role: "REGULAR" } });
+    await expect(prisma.staff.create({ data: { storeId, name: "同名 太郎", role: "EVENT" } })).resolves.toBeTruthy();
   });
 });

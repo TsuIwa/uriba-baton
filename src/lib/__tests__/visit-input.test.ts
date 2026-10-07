@@ -14,6 +14,7 @@ const ctx: ParseContext = {
 
 const base = {
   requestId: "7d1c2b9e-3f4a-4b6c-8d2e-1a0b9c8d7e6f",
+  staffId: 1,
   customer: { kind: "existing", id: "0b6f6a3e-6f1e-4c55-9a43-2a4f3c1d9e10" },
   topicIds: [1],
   checklistItemIds: [10],
@@ -134,7 +135,7 @@ describe("parseVisitInput", () => {
     const r = parseVisitInput({ requestId: base.requestId, customer: {}, inputSeconds: 1 }, ctx);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    for (const e of r.errors) expect(e).toMatch(/^(お客様|用件|温度感):/);
+    for (const e of r.errors) expect(e).toMatch(/^(担当者|お客様|用件|温度感):/);
   });
 
   it("「理解があいまい」の印は、チェックした項目にだけ付けられる", () => {
@@ -146,5 +147,36 @@ describe("parseVisitInput", () => {
     const bad = parseVisitInput({ ...base, checklistItemIds: [10], unclearItemIds: [11] }, ctx);
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(bad.errors[0]).toContain("チェックした項目にだけ");
+  });
+
+  it("おかしな要素が1つでもあれば、黙って消さず欄ごとに断る", () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ topicIds: [1, "2"] }, "用件:"],
+      [{ topicIds: [1, 1] }, "用件:"],
+      [{ topicIds: "1" }, "用件:"],
+      [{ checklistItemIds: [10, null] }, "案内したこと:"],
+      [{ checklistItemIds: [10.5] }, "案内したこと:"],
+      [{ actions: ["QUOTE", "SING"] }, "次にやること:"],
+      [{ actions: ["QUOTE", "QUOTE"] }, "次にやること:"],
+      [{ nextVisitDate: 20270102 }, "次回来店予定:"],
+      [{ memo: 123 }, "メモ:"],
+      [{ inputSeconds: "24" }, "入力秒数"],
+    ];
+    for (const [patch, field] of cases) {
+      const r = parseVisitInput({ ...base, ...patch }, ctx);
+      expect(r.ok, JSON.stringify(patch)).toBe(false);
+      if (!r.ok) expect(r.errors.some((e) => e.startsWith(field)), JSON.stringify(r.errors)).toBe(true);
+    }
+  });
+
+  it("入力秒数が測れなかったときは null のまま(0秒にしない)", () => {
+    const r = parseVisitInput({ ...base, inputSeconds: null }, ctx);
+    expect(r.ok && r.value.inputSeconds).toBeNull();
+  });
+
+  it("画面の担当者がなければ断る", () => {
+    const r = parseVisitInput({ ...base, staffId: undefined }, ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors[0]).toMatch(/^担当者:/);
   });
 });

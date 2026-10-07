@@ -3,6 +3,7 @@
 // 画面上部の「今のスタッフ」。選んだ瞬間に保存する(保存ボタンを押す手間をなくす)
 import { useRef } from "react";
 import { setCurrentStaff } from "@/app/actions";
+import { staffOptionLabel } from "@/lib/staff-label";
 import { EventBadge } from "./ui";
 
 type Props = {
@@ -40,7 +41,7 @@ export function StaffPicker({ staff, currentId }: Props) {
           <optgroup key={g.label} label={g.label}>
             {g.list.map((s) => (
               <option key={s.id} value={s.id}>
-                {s.name}
+                {staffOptionLabel(s, staff)}
               </option>
             ))}
           </optgroup>

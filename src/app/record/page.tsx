@@ -27,6 +27,7 @@ export default async function RecordPage({ searchParams }: Props) {
       key={card?.id ?? "new"}
       topics={catalog.topics}
       staffName={current ? `${current.name}${current.role === "EVENT" ? "(イベント)" : ""}` : null}
+      staffId={current?.id ?? null}
       today={jstDateString(new Date())}
       initialCustomer={
         card

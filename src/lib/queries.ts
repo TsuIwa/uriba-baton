@@ -8,6 +8,7 @@ import type { NextActionKindCode, StaffRoleCode, TemperatureCode } from "./catal
 import { addDays, dbDateToYmd, jstDateString, jstWeekRange, ymdToDbDate } from "./dates";
 import type { ChecklistCatalog, HandoffVisit } from "./handoff";
 import type { CustomerQuery } from "./kana";
+import { visitFingerprint } from "./fingerprint";
 import { summarizeInputSeconds } from "./stats";
 import type { VisitInput } from "./visit-input";
 
@@ -41,6 +42,7 @@ export async function getCatalog() {
         label: i.label,
         volatile: i.isVolatile,
         revisedOn: i.contentRevisedOn ? dbDateToYmd(i.contentRevisedOn) : null,
+        version: i.contentVersion,
       })),
     ]),
   );
@@ -135,6 +137,9 @@ export function toHandoffVisits(card: CustomerCard): HandoffVisit[] {
     temperature: v.temperature as TemperatureCode,
     topics: v.topics.map((t) => ({ code: t.topic.code, label: t.topic.label })),
     checkedItemIds: v.topics.flatMap((t) => t.checks.map((c) => c.checklistItemId)),
+    explainedVersions: Object.fromEntries(
+      v.topics.flatMap((t) => t.checks.map((c) => [c.checklistItemId, c.explainedVersion] as const)),
+    ),
     unclearItemIds: v.topics.flatMap((t) =>
       t.checks.filter((c) => c.understandingUnclear).map((c) => c.checklistItemId),
     ),
@@ -209,18 +214,37 @@ export async function getTodayBoard(storeId: number, now: Date) {
   };
 }
 
-export class DomainError extends Error {}
+/** 業務のルールで断るときのエラー。code で画面側の動きを分ける */
+export class DomainError extends Error {
+  constructor(
+    message: string,
+    readonly code: "STAFF_MISMATCH" | "REQUEST_CONFLICT" | "OTHER" = "OTHER",
+  ) {
+    super(message);
+  }
+}
 
 export type VisitSourceCode = "MANUAL" | "SEED" | "E2E";
 
-/** 送信IDで、もう保存済みの記録を探す(別の店の記録なら断る) */
-async function findByRequestId(storeId: number, requestId: string) {
+/**
+ * 送信IDで、もう保存済みの記録を探す。
+ * 同じIDでも中身(指紋)が違えば、古い記録を返さずに断る(違う内容が黙って捨てられないように)。
+ */
+async function findByRequestId(storeId: number, requestId: string, fingerprint: string) {
   const v = await prisma.visit.findUnique({
     where: { requestId },
-    select: { id: true, customerId: true, customer: { select: { storeId: true } } },
+    select: {
+      id: true,
+      customerId: true,
+      requestFingerprint: true,
+      customer: { select: { storeId: true } },
+    },
   });
   if (!v) return null;
   if (v.customer.storeId !== storeId) throw new DomainError("送信IDが別の店の記録と重なっています");
+  if (v.requestFingerprint !== fingerprint) {
+    throw new DomainError("内容が変わっています。新しい記録として保存し直してください", "REQUEST_CONFLICT");
+  }
   return { visitId: v.id, customerId: v.customerId, duplicated: true };
 }
 
@@ -232,8 +256,11 @@ function isUniqueViolation(e: unknown): boolean {
  * 記録を1件保存する。お客様(新規なら)・記録・用件・案内したこと・次にやることを
  * 1つのトランザクションでまとめて入れる(途中で失敗したら全部なかったことになる)。
  *
- * 二重送信:同じ送信IDが来たら、新しく作らず保存済みの1件を返す。
+ * 二重送信:同じ送信IDで同じ中身が来たら、新しく作らず保存済みの1件を返す。中身が違えば断る。
  * 2つが同時に届いたときは、DBの一意制約で後の方が失敗するので、そこで保存済みの1件を探し直す。
+ *
+ * 担当者:画面に出ていた担当者(input.staffId)と、保存するときの「今のスタッフ」(staffId)が
+ * 違えば保存しない(別の画面で担当者を切り替えた、など)。
  */
 export async function createVisit(
   storeId: number,
@@ -242,13 +269,20 @@ export async function createVisit(
   now: Date = new Date(),
   source: VisitSourceCode = "MANUAL",
 ): Promise<{ visitId: string; customerId: string; duplicated: boolean }> {
-  const already = await findByRequestId(storeId, input.requestId);
+  if (input.staffId !== staffId) {
+    throw new DomainError(
+      "担当者が切り替わっています。画面上部で担当者を選び直してから保存してください",
+      "STAFF_MISMATCH",
+    );
+  }
+  const fingerprint = visitFingerprint(input);
+  const already = await findByRequestId(storeId, input.requestId, fingerprint);
   if (already) return already;
   try {
-    return await insertVisit(storeId, staffId, input, now, source);
+    return await insertVisit(storeId, staffId, input, now, source, fingerprint);
   } catch (e) {
     if (isUniqueViolation(e)) {
-      const saved = await findByRequestId(storeId, input.requestId);
+      const saved = await findByRequestId(storeId, input.requestId, fingerprint);
       if (saved) return saved;
     }
     throw e;
@@ -261,6 +295,7 @@ async function insertVisit(
   input: VisitInput,
   now: Date,
   source: VisitSourceCode,
+  fingerprint: string,
 ) {
   return prisma.$transaction(async (tx) => {
     const staff = await tx.staff.findFirst({ where: { id: staffId, storeId, isActive: true } });
@@ -292,6 +327,7 @@ async function insertVisit(
         staffRoleAtVisit: staff.role,
         source,
         requestId: input.requestId,
+        requestFingerprint: fingerprint,
         visitedAt: now,
         temperature: input.temperature,
         memo: input.memo,
@@ -303,12 +339,22 @@ async function insertVisit(
       data: input.topicIds.map((topicId) => ({ visitId: visit.id, topicId })),
     });
     if (input.checks.length > 0) {
+      // 説明したときの中身の版を一緒に残す(あとで中身が変わったら「変更あり」になる)
+      const versions = new Map(
+        (
+          await tx.checklistItem.findMany({
+            where: { id: { in: input.checks.map((c) => c.checklistItemId) } },
+            select: { id: true, contentVersion: true },
+          })
+        ).map((i) => [i.id, i.contentVersion]),
+      );
       await tx.visitCheck.createMany({
         data: input.checks.map((c) => ({
           visitId: visit.id,
           topicId: c.topicId,
           checklistItemId: c.checklistItemId,
           understandingUnclear: c.unclear,
+          explainedVersion: versions.get(c.checklistItemId) ?? 1,
         })),
       });
     }

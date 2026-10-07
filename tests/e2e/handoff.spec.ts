@@ -101,3 +101,23 @@ test("新規で入れた人が登録済みなら、候補を出して選び直�
   await expect(page.getByRole("button", { name: "変える" })).toBeVisible();
   await expect(page.getByText("ハヤシ ソウタ")).toBeVisible();
 });
+
+test("別のタブで担当者を替えたら、記録画面の保存は断って選び直させる", async ({ page, context }) => {
+  await page.goto("/");
+  await chooseStaff(page, "高橋 恵");
+  await page.goto("/customers?q=ハヤシ");
+  await page.getByRole("link", { name: /ハヤシ ソウタ/ }).click();
+  await page.getByRole("link", { name: "このお客様の記録を残す" }).click();
+  await expect(page.getByText("担当:")).toContainText("高橋 恵");
+  await page.getByRole("button", { name: "検討中" }).click();
+
+  // 別のタブで「今のスタッフ」を替える(この画面には高橋 恵のまま出ている)
+  const other = await context.newPage();
+  await other.goto("/");
+  await chooseStaff(other, "森田 陽菜");
+  await other.close();
+
+  await page.getByRole("button", { name: "保存する" }).click();
+  await expect(page.getByRole("alert").filter({ hasText: "担当者" })).toContainText("担当者が切り替わっています");
+  await expect(page).toHaveURL(/\/record/);
+});

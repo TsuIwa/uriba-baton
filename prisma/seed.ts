@@ -11,7 +11,7 @@ import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import type { NextActionKind, StaffRole, Temperature } from "../src/generated/prisma/enums";
 import { TOPIC_CATALOG, VOLATILE_ITEM_LABELS } from "../src/lib/catalog";
-import { addDays, jstDateString, ymdToDbDate } from "../src/lib/dates";
+import { addDays, dbDateToYmd, jstDateString, ymdToDbDate } from "../src/lib/dates";
 import { refuseUnlessLocal } from "../src/lib/local-db";
 
 const refusal = refuseUnlessLocal(process.env.DATABASE_URL);
@@ -68,6 +68,8 @@ const TEMPS: Temperature[] = ["POSITIVE", "CONSIDERING", "COMPARING", "NOT_NOW"]
 const ACTIONS: NextActionKind[] = ["QUOTE", "FAMILY", "DOCUMENTS", "STOCK", "CALLBACK"];
 
 async function fill(tx: Tx) {
+  // 見本:キャンペーンは seed を流した日の6日前(の開店前)に中身が変わったことにする
+  const campaignRevisedOn = addDays(jstDateString(new Date()), -6);
   // 子のテーブルから順に空にする
   await tx.nextAction.deleteMany();
   await tx.visitCheck.deleteMany();
@@ -103,7 +105,9 @@ async function fill(tx: Tx) {
             isVolatile: VOLATILE_ITEM_LABELS.has(label),
             // 見本:キャンペーンは「seed を流した日の6日前」に中身が変わったことにする
             // (店長が改定日を入れる画面はまだ無い。docs/02_要件.md)
-            contentRevisedOn: label === "キャンペーン" ? ymdToDbDate(addDays(jstDateString(new Date()), -6)) : null,
+            contentRevisedOn: label === "キャンペーン" ? ymdToDbDate(campaignRevisedOn) : null,
+            // 改定したので版は2(改定の前に説明した記録は版1を説明したことになる)
+            contentVersion: label === "キャンペーン" ? 2 : 1,
           })),
         },
       },
@@ -114,6 +118,7 @@ async function fill(tx: Tx) {
   // 「その他」は見本では使わない。よく来る用件ほど出やすくする
   const topicWeights = ["MODEL_CHANGE", "MODEL_CHANGE", "MNP", "MNP", "MNP", "NEW", "HIKARI", "PLAN_REVIEW", "PLAN_REVIEW", "CANCEL"];
   const topicByCode = new Map(topics.map((t) => [t.code, t]));
+  const itemById = new Map(topics.flatMap((t) => t.checklistItems.map((i) => [i.id, i] as const)));
 
   const today = jstDateString(new Date());
   let visitCount = 0;
@@ -187,7 +192,13 @@ async function fill(tx: Tx) {
       });
       await tx.visitCheck.createMany({
         // 1割ほどは「理解があいまい」だったことにする
-        data: checks.map((c) => ({ visitId: visit.id, ...c, understandingUnclear: rand() < 0.12 })),
+        data: checks.map((c) => {
+          const item = itemById.get(c.checklistItemId)!;
+          // 改定日より前の来店なら古い版(1)を説明した。改定日以降(開店前に改定)なら今の版
+          const explainedVersion =
+            item.contentRevisedOn && ymd < dbDateToYmd(item.contentRevisedOn) ? 1 : item.contentVersion;
+          return { visitId: visit.id, ...c, understandingUnclear: rand() < 0.12, explainedVersion };
+        }),
       });
 
       // 前回の「次にやること」は、今回の来店で済んだことにする。

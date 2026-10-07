@@ -66,7 +66,12 @@ export async function findCustomers(query: string): Promise<CustomerOption[]> {
   }));
 }
 
-export type SaveVisitResult = { ok: false; errors: string[] };
+export type SaveVisitResult = {
+  ok: false;
+  errors: string[];
+  /** STAFF_MISMATCH=担当者が切り替わった/REQUEST_CONFLICT=同じ送信IDで中身が違う */
+  code?: "STAFF_MISMATCH" | "REQUEST_CONFLICT";
+};
 
 /** 記録を保存する。うまくいけばお客様カードへ移る */
 export async function saveVisit(raw: unknown): Promise<SaveVisitResult> {
@@ -91,12 +96,14 @@ export async function saveVisit(raw: unknown): Promise<SaveVisitResult> {
     // 同じ送信IDの再送なら、新しく作らず保存済みの1件が返る
     ({ customerId } = await createVisit(store.id, staff.id, parsed.value, new Date(), source));
   } catch (e) {
-    if (e instanceof DomainError) return { ok: false, errors: [e.message] };
+    if (e instanceof DomainError) {
+      return { ok: false, errors: [e.message], code: e.code === "OTHER" ? undefined : e.code };
+    }
     console.error(e);
     return { ok: false, errors: ["保存できませんでした。もう一度押してください"] };
   }
   revalidatePath("/");
-  redirect(`/customers/${customerId}?saved=${parsed.value.inputSeconds}`);
+  redirect(`/customers/${customerId}?saved=${parsed.value.inputSeconds ?? "na"}`);
 }
 
 /** 次にやることを「済み」にする */

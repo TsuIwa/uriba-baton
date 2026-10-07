@@ -8,7 +8,8 @@
 //   3. 説明済みかどうかは日数で切らず、お客様の理解度で決める
 //      - 前回「理解があいまい」だった項目は、もう一度詳しく案内する
 //      - それ以外の説明済みは、まず理解度を伺い、必要ならもう一度詳しく
-//      - 中身が変わる項目(料金・キャンペーンなど)は、説明のあとに変わっていたら必ず案内する
+//      - 中身が変わる項目(料金・キャンペーンなど)は、説明した版と今の版が違えば必ず案内する
+//   「必ず案内(変更あり)」と「担当者に確認」は、ヒントの3件の上限の外に出して全部見せる
 
 import {
   NEXT_ACTION_LABEL,
@@ -24,8 +25,10 @@ export type ChecklistItemInfo = {
   label: string;
   /** 料金・キャンペーンのように中身が変わる項目か */
   volatile?: boolean;
-  /** 最後に中身が変わった日 "YYYY-MM-DD"(なければ null) */
+  /** 最後に中身が変わった日 "YYYY-MM-DD"(表示用。判定には使わない) */
   revisedOn?: string | null;
+  /** 今の中身の版(なければ 1) */
+  version?: number;
 };
 
 export type ChecklistCatalog = Record<string, ChecklistItemInfo[]>;
@@ -40,6 +43,8 @@ export type HandoffVisit = {
   checkedItemIds: number[];
   /** そのうち、お客様の理解があいまいだった項目 */
   unclearItemIds: number[];
+  /** 案内した項目ごとの、説明したときの中身の版(無ければ版1を説明したとみなす) */
+  explainedVersions?: Record<number, number>;
   /** その記録の「次にやること」(済んだものも含む) */
   actions: { kind: NextActionKindCode; note: string | null; done: boolean }[];
 };
@@ -47,7 +52,7 @@ export type HandoffVisit = {
 /**
  * 案内項目の状況。
  * - NOT_YET:まだ一度も案内していない
- * - CHANGED:中身が変わる項目で、最後に案内した日以降に中身が変わった(必ず案内)
+ * - CHANGED:中身が変わる項目で、最後に説明した版と今の版が違う(必ず案内)
  * - UNCLEAR:最後に案内したとき、理解があいまいだった(もう一度詳しく)
  * - EXPLAINED:案内済み(まず理解度を伺う)
  */
@@ -100,20 +105,22 @@ function actionLabel(kind: NextActionKindCode, note: string | null): string {
 
 /**
  * 前回の用件の、案内項目ごとの状況(目録の話す順)。
- * 「説明済み」に期限は付けない。改定日と案内日が同じ日は、どちらが先か分からないので
- * CHANGED に倒す(必ず案内する方)。CHANGED は UNCLEAR より優先する。
+ * 「説明済み」に期限は付けない。中身が変わったかは日付でなく版で比べる
+ * (改定と説明が同じ日でも、どちらの版を説明したかで正しく決まる)。CHANGED は UNCLEAR より優先する。
  */
 export function itemStatuses(visits: HandoffVisit[], catalog: ChecklistCatalog): ItemStatus[] {
   const last = visits[0];
   if (!last) return [];
   // 項目ごとに「最後に案内した日」と「そのとき理解があいまいだったか」
   // visits は新しい順なので、最初に見つかったものが最後の案内
-  const latest = new Map<number, { on: string; unclear: boolean }>();
+  const latest = new Map<number, { on: string; unclear: boolean; version: number }>();
   for (const v of visits) {
     const on = jstDateString(v.visitedAt);
     const unclear = new Set(v.unclearItemIds);
     for (const id of v.checkedItemIds) {
-      if (!latest.has(id)) latest.set(id, { on, unclear: unclear.has(id) });
+      if (!latest.has(id)) {
+        latest.set(id, { on, unclear: unclear.has(id), version: v.explainedVersions?.[id] ?? 1 });
+      }
     }
   }
   return last.topics.flatMap((t) =>
@@ -121,7 +128,7 @@ export function itemStatuses(visits: HandoffVisit[], catalog: ChecklistCatalog):
       const explained = latest.get(item.id) ?? null;
       let state: ItemState;
       if (!explained) state = "NOT_YET";
-      else if (item.volatile && item.revisedOn && item.revisedOn >= explained.on) state = "CHANGED";
+      else if (item.volatile && explained.version !== (item.version ?? 1)) state = "CHANGED";
       else if (explained.unclear) state = "UNCLEAR";
       else state = "EXPLAINED";
       return {
@@ -279,20 +286,23 @@ const TEMPERATURE_HINT: Record<TemperatureCode, string> = {
   NOT_NOW: "無理に勧めず、前回から変わったことを聞く",
 };
 
+export type TalkHints = {
+  /** 必ず全部見せるもの(担当者への確認・変更あり)。件数の上限なし */
+  required: string[];
+  /** 補助のヒント(最大3つ) */
+  extra: string[];
+};
+
 /**
- * 話す順のヒント(最大3つ)。並び:
- * ①前回より前の未完了の約束(担当者に確認してから)
- * ②前回の未完了の約束
- * ③中身が変わった項目(必ず案内)
- * ④前回あいまいだった項目(もう一度詳しく)
- * ⑤温度感に合わせた一言
- * ⑥まだ案内していない項目
- * ⑦前回済んだ約束の続き
- * 3つに届かなければ、残りと「説明済みは理解度を伺う」で埋める。
+ * 話す順のヒント。
+ * required(上限なし・全部):前回より前の未完了の約束(担当者に確認してから)/中身が変わった項目(必ず案内)
+ * extra(最大3つ)の並び:
+ *   ①前回の未完了の約束 ②前回あいまいだった項目 ③温度感に合わせた一言
+ *   ④まだ案内していない項目 ⑤前回済んだ約束の続き → 残り → 「説明済みは理解度を伺う」
  */
-export function buildTalkHints(visits: HandoffVisit[], catalog: ChecklistCatalog): string[] {
+export function buildTalkHints(visits: HandoffVisit[], catalog: ChecklistCatalog): TalkHints {
   const last = visits[0];
-  if (!last) return ["用件を聞く(機種変更・のりかえ・光回線など)"];
+  if (!last) return { required: [], extra: ["用件を聞く(機種変更・のりかえ・光回線など)"] };
 
   const items = itemStatuses(visits, catalog);
   const labelsOf = (s: ItemState) => items.filter((i) => i.state === s).map((i) => i.label);
@@ -312,21 +322,20 @@ export function buildTalkHints(visits: HandoffVisit[], catalog: ChecklistCatalog
       : undefined;
 
   const ordered = [
-    staleHints[0],
     openHints[0],
-    changedHints[0],
     unclearHints[0],
     TEMPERATURE_HINT[last.temperature],
     notYetHints[0],
     doneHints[0],
-    ...staleHints.slice(1),
     ...openHints.slice(1),
-    ...changedHints.slice(1),
     ...unclearHints.slice(1),
     ...notYetHints.slice(1),
     ...doneHints.slice(1),
     confirmHint,
   ].filter((h): h is string => typeof h === "string");
 
-  return [...new Set(ordered)].slice(0, MAX_HINTS);
+  return {
+    required: [...staleHints, ...changedHints],
+    extra: [...new Set(ordered)].slice(0, MAX_HINTS),
+  };
 }

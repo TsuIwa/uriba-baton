@@ -25,6 +25,7 @@ enum VisitSource {
   MANUAL // 人が画面で入れた
   SEED // 見本データ(作り物)
   E2E // 自動テストが画面で入れた
+  UNKNOWN // この列ができる前からあった記録(出どころ不明。集計に入れない)
 
   @@map("visit_source")
 }
@@ -73,7 +74,7 @@ model Staff {
   visits           Visit[]
   completedActions NextAction[] @relation("CompletedBy")
 
-  @@unique([storeId, name])
+  // 名前の一意制約は付けない(同じ名前のスタッフはありうる。画面では役割とIDで見分ける)
   @@map("staff")
 }
 
@@ -100,23 +101,25 @@ model Customer {
 
 /// 接客記録(1回の来店で1件)
 model Visit {
-  id               String      @id @default(uuid()) @db.Uuid
-  customerId       String      @map("customer_id") @db.Uuid
+  id                 String      @id @default(uuid()) @db.Uuid
+  customerId         String      @map("customer_id") @db.Uuid
   /// 案内した人。NOT NULL なので「誰が案内したか」は必ず残る
-  staffId          Int         @map("staff_id")
+  staffId            Int         @map("staff_id")
   /// 記録した時点の役割。後で常勤になっても、過去の記録の「イベント」の印と集計は変わらない
-  staffRoleAtVisit StaffRole   @map("staff_role_at_visit")
+  staffRoleAtVisit   StaffRole   @map("staff_role_at_visit")
   /// 記録の出どころ(見本・自動テスト・人)
-  source           VisitSource @default(MANUAL)
+  source             VisitSource @default(MANUAL)
   /// 記録画面を開いたときに発行する送信ID。同じIDの再送は1件にまとめる(二重送信の防止)
-  requestId        String      @unique @default(dbgenerated("gen_random_uuid()")) @map("request_id") @db.Uuid
-  visitedAt        DateTime    @default(now()) @map("visited_at") @db.Timestamptz(3)
-  temperature      Temperature
-  memo             String?     @db.VarChar(500)
-  /// 画面を開いてから保存までの秒数
-  inputSeconds     Int         @map("input_seconds")
-  nextVisitDate    DateTime?   @map("next_visit_date") @db.Date
-  createdAt        DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+  requestId          String      @unique @default(dbgenerated("gen_random_uuid()")) @map("request_id") @db.Uuid
+  /// 送った内容の指紋(SHA-256)。同じ送信IDで中身が違う再送を見分ける。この列より前の記録は空
+  requestFingerprint String?     @map("request_fingerprint") @db.Char(64)
+  visitedAt          DateTime    @default(now()) @map("visited_at") @db.Timestamptz(3)
+  temperature        Temperature
+  memo               String?     @db.VarChar(500)
+  /// 最初の入力から保存までの秒数。測れなかったときは空(集計に入れない)
+  inputSeconds       Int?        @map("input_seconds")
+  nextVisitDate      DateTime?   @map("next_visit_date") @db.Date
+  createdAt          DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
 
   customer    Customer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
   staff       Staff        @relation(fields: [staffId], references: [id], onDelete: Restrict)
@@ -155,6 +158,8 @@ model ChecklistItem {
   /// 最後に中身が変わった日(店長が入れる想定。この版は seed で入れる)。
   /// この日より前に説明していたら「変更あり:必ず案内」にする
   contentRevisedOn DateTime? @map("content_revised_on") @db.Date
+  /// 中身の版。中身が変わるたびに1つ上げる。説明したときの版と比べて「変更あり」を決める
+  contentVersion   Int       @default(1) @map("content_version")
 
   topic       Topic        @relation(fields: [topicId], references: [id], onDelete: Restrict)
   visitChecks VisitCheck[]
@@ -188,6 +193,8 @@ model VisitCheck {
   checklistItemId      Int     @map("checklist_item_id")
   /// 案内したが、お客様の理解があいまいだった(任意の印。次の人はもう一度詳しく案内する)
   understandingUnclear Boolean @default(false) @map("understanding_unclear")
+  /// 説明したときの、その項目の中身の版(checklist_items.content_version)
+  explainedVersion     Int     @map("explained_version")
 
   visitTopic    VisitTopic    @relation(fields: [visitId, topicId], references: [visitId, topicId], onDelete: Cascade)
   checklistItem ChecklistItem @relation(fields: [checklistItemId, topicId], references: [id, topicId], onDelete: Restrict)

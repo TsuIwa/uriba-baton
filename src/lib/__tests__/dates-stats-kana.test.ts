@@ -89,8 +89,12 @@ describe("inputSeconds(入力にかかった秒数)", () => {
     expect(inputSeconds(firstTapAt, savedAt)).toBe(24);
     expect(inputSeconds(firstTapAt, savedAt)).not.toBe(elapsedSeconds(openedAt, savedAt));
   });
-  it("一度も入力していなければ0秒", () => {
-    expect(inputSeconds(null, 300_000)).toBe(0);
+  it("一度も入力していなければ null(0秒として集計に混ぜない)", () => {
+    expect(inputSeconds(null, 300_000)).toBeNull();
+  });
+  it("集計は null(測れなかった記録)を数えない", () => {
+    expect(summarizeInputSeconds([20, null, 30]).count).toBe(2);
+    expect(summarizeInputSeconds([null]).average).toBeNull();
   });
 });
 
