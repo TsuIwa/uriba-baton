@@ -82,7 +82,7 @@ export type CardView = {
   /** 説明済み(畳んで出す) */
   explained: ItemStatus[];
   /** 今日の一覧用の数 */
-  counts: { required: number; changed: number; unclear: number; notYet: number };
+  counts: { required: number; confirm: number; changed: number; unclear: number; notYet: number };
   /** 読み上げ用の要約(画面には出さない) */
   summaryText: string;
 };
@@ -125,6 +125,8 @@ export function buildCardView(visits: HandoffVisit[], catalog: ChecklistCatalog)
     explained: items.filter((i) => i.state === "EXPLAINED"),
     counts: {
       required: hints.required.length,
+      // 必ず=先に確認(前々回以前の未完了の約束)+変更あり
+      confirm: summary.staleActions.length,
       changed: count("CHANGED"),
       unclear: count("UNCLEAR"),
       notYet: count("NOT_YET"),

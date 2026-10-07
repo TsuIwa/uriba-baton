@@ -62,8 +62,8 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
   await expect(page.getByTestId("handoff-summary")).toContainText("森田 陽菜(イベント)");
 
   // 約束していた見積もりは済みにする
-  await page.getByRole("button", { name: "済み", exact: true }).first().click();
-  await expect(page.getByRole("button", { name: "済み", exact: true })).toHaveCount(0);
+  await page.getByRole("button", { name: "済みにする" }).first().click();
+  await expect(page.getByRole("button", { name: "済みにする" })).toHaveCount(0);
 
   // 続きを記録(前回の用件は最初から選ばれている)
   await page.getByRole("link", { name: "このお客様の記録を残す" }).click();

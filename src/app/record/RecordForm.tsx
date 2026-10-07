@@ -268,11 +268,15 @@ export function RecordForm({
     goNext(1, { 1: true });
   }
 
+  /** 足りない段のうち最初のものを開く */
+  function openMissing() {
+    openStep(!hasCustomer ? 1 : topicIds.length === 0 ? 2 : 4);
+  }
+
   function submit() {
     // 足りない段があれば、保存せずにその段を開く(保存ボタンは無効にしない)
     if (staffName !== null && !ready) {
-      const first: StepNo = !hasCustomer ? 1 : topicIds.length === 0 ? 2 : 4;
-      openStep(first);
+      openMissing();
       return;
     }
     const seconds = secondsSince(startedAt.current);
@@ -475,7 +479,7 @@ export function RecordForm({
                                   : "border-baton-line-strong bg-baton-men text-baton-moji"
                               }`}
                             >
-                              説明済み
+                              {explained ? "✓ " : ""}説明済み
                             </button>
                             <button
                               type="button"
@@ -685,10 +689,18 @@ export function RecordForm({
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-baton-line bg-baton-men px-4 pt-2 pb-[calc(env(safe-area-inset-bottom)+0.75rem)]">
         <div className="mx-auto max-w-md">
           {!ready ? (
-            <p className="mb-1.5 text-center text-[13px] text-baton-sub">
-              あと:{missing.join("・")}
-              {staffName !== null ? "(押すと開きます)" : ""}
-            </p>
+            staffName !== null ? (
+              // 残りの段を開くボタン(保存ボタンと同じ所にまとめて、まだ終わっていないことを見せる)
+              <button
+                type="button"
+                onClick={openMissing}
+                className="mb-1 flex min-h-11 w-full items-center justify-center text-[15px] font-bold text-baton-ai underline underline-offset-4"
+              >
+                あと:{missing.join("・")} を開く
+              </button>
+            ) : (
+              <p className="mb-1.5 text-center text-[13px] text-baton-sub">あと:{missing.join("・")}</p>
+            )
           ) : null}
           {/* 足りなくても押せる(足りない段を開く)。担当者が未選択のときだけは、開く段が無いので押せない */}
           <button

@@ -133,15 +133,25 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
           <div aria-label="先に確認" role="group" className="mt-4 rounded-xl bg-baton-shu px-3.5 py-3 text-baton-on-shu">
             <ul className="space-y-2.5">
               {view.confirm.map((c) => (
-                <li key={`${c.date}${c.staffName}`} className="flex items-start gap-2.5">
+                <li key={`${c.date}${c.staffName}`} className="flex items-start gap-2.5 max-[359px]:flex-col max-[359px]:gap-1">
                   <span className="mt-0.5 shrink-0 rounded bg-baton-men px-1.5 py-0.5 text-[13px] font-bold leading-tight text-baton-shu">
                     先に確認
                   </span>
+                  {/* 確認する相手と、確認する約束を分けて出す(約束の名前は途中で折らない) */}
                   <div className="min-w-0">
                     <p className="text-[17px] font-bold leading-snug">
-                      {c.staffName}さんに{c.labels.map((l) => `「${l}」`).join("")}は済んだ?
+                      {c.staffName}さんに、<span className="whitespace-nowrap">済んだか確認</span>
                     </p>
-                    <p className="mt-0.5 text-[13px] leading-snug tabular-nums">{c.date}の約束が<span className="whitespace-nowrap">未完了のまま</span></p>
+                    <p className="text-[17px] font-bold leading-snug">
+                      {c.labels.map((l) => (
+                        <span key={l} className="inline-block">
+                          「{l}」
+                        </span>
+                      ))}
+                    </p>
+                    <p className="mt-0.5 text-[13px] leading-snug tabular-nums">
+                      {c.date}の約束が<span className="whitespace-nowrap">未完了のまま</span>
+                    </p>
                   </div>
                 </li>
               ))}

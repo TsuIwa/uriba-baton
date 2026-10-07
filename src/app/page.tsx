@@ -56,6 +56,7 @@ function ActionList({ actions, canComplete }: { actions: OpenAction[]; canComple
 /** 3行目:状態を言葉で(0の状態は書かない)。色丸と数字だけの並びはやめた(07 §2-3) */
 function StateWords({ counts }: { counts: CardView["counts"] }) {
   const parts = [
+    counts.confirm > 0 ? { text: `先に確認${counts.confirm}`, shu: true } : null,
     counts.changed > 0 ? { text: `変更あり${counts.changed}`, shu: true } : null,
     counts.unclear > 0 ? { text: `あいまい${counts.unclear}`, shu: false } : null,
     counts.notYet > 0 ? { text: `まだ${counts.notYet}`, shu: false } : null,

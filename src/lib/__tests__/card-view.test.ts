@@ -107,7 +107,7 @@ describe("buildCardView", () => {
     ]);
     expect(v.explained.map((i) => i.label)).toEqual(["料金比較", "端末価格"]);
     // 必ず=先に確認2件+変更あり1件
-    expect(v.counts).toEqual({ required: 3, changed: 1, unclear: 1, notYet: 1 });
+    expect(v.counts).toEqual({ required: 3, confirm: 2, changed: 1, unclear: 1, notYet: 1 });
     expect(v.summaryText).toContain("前回 10/3(土) 小林 葵(常勤)");
   });
 });
