@@ -10,7 +10,7 @@ import "dotenv/config";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../src/generated/prisma/client";
 import type { NextActionKind, StaffRole, Temperature } from "../src/generated/prisma/enums";
-import { TOPIC_CATALOG } from "../src/lib/catalog";
+import { TOPIC_CATALOG, VOLATILE_ITEM_LABELS } from "../src/lib/catalog";
 import { addDays, jstDateString, ymdToDbDate } from "../src/lib/dates";
 import { refuseUnlessLocal } from "../src/lib/local-db";
 
@@ -97,7 +97,14 @@ async function fill(tx: Tx) {
         label: t.label,
         sortOrder: i + 1,
         checklistItems: {
-          create: t.items.map((label, j) => ({ label, sortOrder: j + 1 })),
+          create: t.items.map((label, j) => ({
+            label,
+            sortOrder: j + 1,
+            isVolatile: VOLATILE_ITEM_LABELS.has(label),
+            // 見本:キャンペーンは「seed を流した日の6日前」に中身が変わったことにする
+            // (店長が改定日を入れる画面はまだ無い。docs/02_要件.md)
+            contentRevisedOn: label === "キャンペーン" ? ymdToDbDate(addDays(jstDateString(new Date()), -6)) : null,
+          })),
         },
       },
       include: { checklistItems: { orderBy: { sortOrder: "asc" } } },
@@ -179,11 +186,14 @@ async function fill(tx: Tx) {
         data: uniqueTopics.map((t) => ({ visitId: visit.id, topicId: t.id })),
       });
       await tx.visitCheck.createMany({
-        data: checks.map((c) => ({ visitId: visit.id, ...c })),
+        // 1割ほどは「理解があいまい」だったことにする
+        data: checks.map((c) => ({ visitId: visit.id, ...c, understandingUnclear: rand() < 0.12 })),
       });
 
-      // 前回の「次にやること」は、今回の来店で済んだことにする
-      if (prevActions.length > 0) {
+      // 前回の「次にやること」は、今回の来店で済んだことにする。
+      // ただし何人かは、前々回の約束が済んだか分からないまま残しておく(現場でよくある形の見本)
+      const leaveOpen = ci % 5 === 4;
+      if (prevActions.length > 0 && !leaveOpen) {
         await tx.nextAction.updateMany({
           where: { id: { in: prevActions.map((a) => a.id) } },
           data: { doneAt: visitedAt, doneByStaffId: person.id },

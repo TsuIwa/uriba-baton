@@ -8,7 +8,7 @@ import {
   type TemperatureCode,
 } from "@/lib/catalog";
 import { dbDateToYmd, formatJstShort, formatYmdShort } from "@/lib/dates";
-import { buildHandoffSummary, buildTalkHints } from "@/lib/handoff";
+import { ITEM_STATE_LABEL, buildHandoffSummary, buildTalkHints, type ItemState } from "@/lib/handoff";
 import { getCatalog, getCustomerCard, getStore, toHandoffVisits } from "@/lib/queries";
 import { getCurrentStaff } from "@/lib/session";
 import { ActionDoneButton } from "../../_components/ActionDoneButton";
@@ -39,9 +39,19 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
   const summary = buildHandoffSummary(visits, catalog.checklist);
   const hints = buildTalkHints(visits, catalog.checklist);
   const savedSeconds = saved && /^\d+$/.test(saved) ? Number(saved) : null;
+  // 前回より前の記録の未完了は「担当者に確認してから」の印をつける
+  const latestVisitId = card.visits[0]?.id;
   const openActions = card.visits.flatMap((v) =>
-    v.nextActions.filter((a) => a.doneAt === null).map((a) => ({ ...a, visitedAt: v.visitedAt })),
+    v.nextActions
+      .filter((a) => a.doneAt === null)
+      .map((a) => ({ ...a, visitedAt: v.visitedAt, staffName: v.staff.name, stale: v.id !== latestVisitId })),
   );
+  const STATE_STYLE: Record<ItemState, string> = {
+    NOT_YET: "bg-slate-100 text-slate-600",
+    CHANGED: "bg-accent text-white",
+    UNCLEAR: "bg-accent-soft text-accent",
+    EXPLAINED: "bg-brand-soft text-brand",
+  };
 
   return (
     <div className="space-y-3">
@@ -83,6 +93,26 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
         </ol>
       </Section>
 
+      {summary.items.length > 0 ? (
+        <Section title="案内の状況" note="前回の用件・話す順">
+          <ul className="divide-y divide-brand-line/60 text-sm">
+            {summary.items.map((i) => (
+              <li key={i.id} className="flex items-center justify-between gap-2 py-1.5">
+                <span>
+                  {i.label}
+                  {i.lastExplainedOn ? (
+                    <span className="ml-1 text-xs text-slate-400">({formatYmdShort(i.lastExplainedOn)} 案内)</span>
+                  ) : null}
+                </span>
+                <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-bold ${STATE_STYLE[i.state]}`}>
+                  {ITEM_STATE_LABEL[i.state]}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+
       {openActions.length > 0 ? (
         <Section title="終わっていない「次にやること」">
           <ul className="divide-y divide-brand-line/60">
@@ -90,7 +120,14 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
               <li key={a.id} className="flex items-center gap-3 py-2">
                 <div className="flex-1">
                   <div className="font-bold">{nextActionText(a.kind as NextActionKindCode, a.note)}</div>
-                  <div className="text-xs text-slate-500">{formatJstShort(a.visitedAt)} の記録から</div>
+                  <div className="text-xs text-slate-500">
+                    {formatJstShort(a.visitedAt)} {a.staffName}さんの記録から
+                  </div>
+                  {a.stale ? (
+                    <div className="mt-0.5 text-xs font-bold text-accent">
+                      済んでいるか{a.staffName}さんに確認してから
+                    </div>
+                  ) : null}
                 </div>
                 {current ? <ActionDoneButton actionId={a.id} back={`/customers/${card.id}`} /> : null}
               </li>

@@ -31,7 +31,16 @@ export function summarizeInputSeconds(seconds: number[]): InputSecondsSummary {
 }
 
 /**
- * 画面を開いた時刻と保存した時刻(ミリ秒)から、保存する秒数を決める。
+ * 入力にかかった秒数 = 最初の入力(タップ・文字入力)から保存まで。
+ * 画面を開いた時からだと、画面を開いたまま接客している時間が混ざるため。
+ * 一度も入力していない(=最初の入力の時刻がない)ときは0秒。
+ */
+export function inputSeconds(firstInputAtMs: number | null, savedAtMs: number): number {
+  return firstInputAtMs === null ? 0 : elapsedSeconds(firstInputAtMs, savedAtMs);
+}
+
+/**
+ * 始めた時刻と保存した時刻(ミリ秒)から、保存する秒数を決める。
  * 端末の時計が戻った等でマイナスになったら0、DBの上限(3600秒)を超えたら上限にそろえる。
  */
 export function elapsedSeconds(startedAtMs: number, savedAtMs: number): number {

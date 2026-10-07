@@ -22,12 +22,16 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
   // 1人目:新規のお客様を記録
   await page.getByRole("link", { name: "記録する", exact: true }).click();
   await expect(page.getByText("担当:")).toContainText("森田 陽菜(イベント)");
+  // 最初の入力までは秒を数えない(画面を開いたまま接客することがあるため)
+  await expect(page.getByText("—", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "＋ 新規のお客様" }).click();
   await page.getByLabel("お名前カナ").fill(nameKana.replace("エトウ", "えとう"));
   await page.getByLabel("電話番号の下4桁").fill(last4);
   await page.getByRole("button", { name: "のりかえ(MNP)" }).click();
   await page.getByRole("button", { name: "料金比較" }).click();
-  await page.getByRole("button", { name: "端末価格" }).click();
+  await page.getByRole("button", { name: "端末価格", exact: true }).click();
+  // 端末価格は、お客様の理解があいまいだった
+  await page.getByRole("button", { name: "端末価格の理解があいまい" }).click();
   await page.getByRole("button", { name: "他社と比較中" }).click();
   await page.getByRole("button", { name: "見積もりを渡す" }).click();
   await page.getByRole("button", { name: "明日" }).click();
@@ -37,9 +41,12 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
   await expect(page.getByRole("status")).toContainText("保存しました");
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(nameKana);
   const summary = page.getByTestId("handoff-summary");
-  await expect(summary).toContainText("森田 陽菜(イベント)が「のりかえ(MNP)」で 料金比較・端末価格 まで案内済み。");
-  await expect(summary).toContainText("次は 下取り・キャンペーン から。");
-  await expect(page.getByText("お渡しした見積もりの感想から聞く")).toBeVisible();
+  await expect(summary).toContainText("森田 陽菜(イベント)が「のりかえ(MNP)」で 料金比較・端末価格 まで案内。");
+  await expect(summary).toContainText("前回あいまいだった:端末価格 はもう一度詳しく案内。");
+  await expect(summary).toContainText("次は 端末価格(前回あいまい)・下取り から。");
+  // 見積もりはまだ渡していないので「作りながら案内」(感想は聞かない)
+  await expect(page.getByText(/見積もりを作りながら詳細を案内する/)).toBeVisible();
+  await expect(page.getByText("お渡しした見積もりの感想から聞く")).toHaveCount(0);
   await page.screenshot({ path: "test-results/01_お客様カード_1回目.png", fullPage: true });
 
   // 2人目:常勤に替わって、お客様を検索して開く
@@ -64,7 +71,7 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
 
   await expect(page.getByRole("status")).toContainText("保存しました");
   await expect(page.getByTestId("handoff-summary")).toContainText(
-    "高橋 恵(常勤)が「のりかえ(MNP)」で 下取り まで案内済み。次は キャンペーン・必要書類 から。",
+    "高橋 恵(常勤)が「のりかえ(MNP)」で 下取り まで案内。前回あいまいだった:端末価格 はもう一度詳しく案内。次は 端末価格(前回あいまい)・キャンペーン から。",
   );
   await expect(page.getByText("来店 2 回")).toBeVisible();
 

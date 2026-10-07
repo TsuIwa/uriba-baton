@@ -1,12 +1,13 @@
 "use client";
 
 // 30秒で残す記録フォーム。上から順にタップしていけば保存まで行ける並びにしている。
-// 画面を開いた時刻から保存を押した時刻までの秒数を、記録と一緒に保存する。
+// 最初の入力(タップ・文字入力)から保存を押すまでの秒数を、記録と一緒に保存する。
+// 画面を開いた時からにしないのは、接客中に画面を開いたままにすることがあり、接客の時間が混ざるため。
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { NEXT_ACTIONS, TEMPERATURES, type NextActionKindCode, type TemperatureCode } from "@/lib/catalog";
 import { addDays, formatYmdShort } from "@/lib/dates";
-import { elapsedSeconds } from "@/lib/stats";
+import { elapsedSeconds, inputSeconds } from "@/lib/stats";
 import { findCustomers, saveVisit, type CustomerOption } from "../actions";
 
 type Topic = { id: number; code: string; label: string; items: { id: number; label: string }[] };
@@ -64,19 +65,26 @@ function Step({ n, title, note, children }: { n: number; title: string; note?: s
 }
 
 export function RecordForm({ topics, staffName, today, initialCustomer, initialTopicIds, initialNew }: Props) {
-  // 計測の開始時刻と送信ID。画面が表示された時点で決める
+  // 計測の開始時刻(最初の入力の時)と送信ID(画面が表示された時)
   // 送信IDは、保存を2回押した・通信が切れて送り直した、でも記録を1件にするために使う
   const startedAt = useRef<number | null>(null);
   const requestId = useRef<string | null>(null);
-  const [elapsed, setElapsed] = useState(0);
+  const [elapsed, setElapsed] = useState<number | null>(null);
   useEffect(() => {
-    startedAt.current = Date.now();
     requestId.current = crypto.randomUUID();
     const timer = setInterval(() => {
       if (startedAt.current !== null) setElapsed(elapsedSeconds(startedAt.current, Date.now()));
     }, 1000);
     return () => clearInterval(timer);
   }, []);
+
+  /** 最初の入力で計測を始める(2回目以降は何もしない) */
+  function markStarted() {
+    if (startedAt.current === null) {
+      startedAt.current = Date.now();
+      setElapsed(0);
+    }
+  }
 
   // 1. お客様
   const [customer, setCustomer] = useState<CustomerOption | null>(initialCustomer);
@@ -119,6 +127,8 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
   // 2〜6
   const [topicIds, setTopicIds] = useState<number[]>(initialTopicIds);
   const [itemIds, setItemIds] = useState<number[]>([]);
+  // 案内したが理解があいまいだった項目(任意。既定は付けない)
+  const [unclearIds, setUnclearIds] = useState<number[]>([]);
   const [temperature, setTemperature] = useState<TemperatureCode | null>(null);
   const [actions, setActions] = useState<NextActionKindCode[]>([]);
   const [otherNote, setOtherNote] = useState("");
@@ -145,10 +155,17 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
     // 外した用件のチェックは一緒に外す(DBの制約にも合わせる)
     const allowed = new Set(topics.filter((t) => next.includes(t.id)).flatMap((t) => t.items.map((i) => i.id)));
     setItemIds((prev) => prev.filter((i) => allowed.has(i)));
+    setUnclearIds((prev) => prev.filter((i) => allowed.has(i)));
+  }
+
+  function toggleItem(id: number) {
+    setItemIds(toggle(itemIds, id));
+    // チェックを外したら、あいまいの印も外す
+    if (itemIds.includes(id)) setUnclearIds((prev) => prev.filter((i) => i !== id));
   }
 
   function submit() {
-    const seconds = startedAt.current === null ? 0 : elapsedSeconds(startedAt.current, Date.now());
+    const seconds = inputSeconds(startedAt.current, Date.now());
     const payload = {
       requestId: requestId.current,
       customer: customer
@@ -156,6 +173,7 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
         : { kind: "new", nameKana: newKana, phoneLast4: newLast4 },
       topicIds,
       checklistItemIds: itemIds,
+      unclearItemIds: unclearIds,
       temperature,
       actions,
       otherNote,
@@ -178,11 +196,18 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
   ];
 
   return (
-    <div className="space-y-3 pb-24">
+    // 画面のどこかを最初に触った・打った時から測る(保存ボタンだけは除く)
+    <div
+      className="space-y-3 pb-24"
+      onPointerDownCapture={(e) => {
+        if (!(e.target as HTMLElement).closest("[data-save]")) markStarted();
+      }}
+      onInputCapture={markStarted}
+    >
       <div className="flex items-center justify-between px-1">
         <h1 className="text-lg font-bold">記録する</h1>
         <span className="rounded-full bg-brand-soft px-3 py-1 text-sm font-bold text-brand" aria-live="off">
-          {elapsed}秒
+          {elapsed === null ? "—" : `${elapsed}秒`}
         </span>
       </div>
 
@@ -313,11 +338,35 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
                 <div className="mb-1.5 text-sm font-bold text-slate-600">{t.label}</div>
                 <div className="flex flex-wrap gap-2">
                   {t.items.map((i) => (
-                    <Chip key={i.id} selected={itemIds.includes(i.id)} onClick={() => setItemIds(toggle(itemIds, i.id))}>
+                    <Chip key={i.id} selected={itemIds.includes(i.id)} onClick={() => toggleItem(i.id)}>
                       {i.label}
                     </Chip>
                   ))}
                 </div>
+                {t.items.some((i) => itemIds.includes(i.id)) ? (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    <span className="text-xs text-slate-500">理解があいまい(任意):</span>
+                    {t.items
+                      .filter((i) => itemIds.includes(i.id))
+                      .map((i) => (
+                        <button
+                          key={i.id}
+                          type="button"
+                          aria-pressed={unclearIds.includes(i.id)}
+                          aria-label={`${i.label}の理解があいまい`}
+                          onClick={() => setUnclearIds(toggle(unclearIds, i.id))}
+                          className={`min-h-9 rounded-full border px-2.5 text-xs font-bold ${
+                            unclearIds.includes(i.id)
+                              ? "border-accent bg-accent-soft text-accent"
+                              : "border-brand-line bg-white text-slate-500"
+                          }`}
+                        >
+                          {unclearIds.includes(i.id) ? "？" : ""}
+                          {i.label}
+                        </button>
+                      ))}
+                  </div>
+                ) : null}
               </div>
             ))}
           </div>
@@ -408,6 +457,7 @@ export function RecordForm({ topics, staffName, today, initialCustomer, initialT
           ) : null}
           <button
             type="button"
+            data-save
             onClick={submit}
             disabled={!ready || pending}
             className="min-h-14 w-full rounded-xl bg-accent text-lg font-bold text-white shadow disabled:bg-slate-300"

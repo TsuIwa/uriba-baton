@@ -34,7 +34,15 @@ export async function getCatalog() {
     include: { checklistItems: { orderBy: { sortOrder: "asc" } } },
   });
   const checklist: ChecklistCatalog = Object.fromEntries(
-    topics.map((t) => [t.code, t.checklistItems.map((i) => ({ id: i.id, label: i.label }))]),
+    topics.map((t) => [
+      t.code,
+      t.checklistItems.map((i) => ({
+        id: i.id,
+        label: i.label,
+        volatile: i.isVolatile,
+        revisedOn: i.contentRevisedOn ? dbDateToYmd(i.contentRevisedOn) : null,
+      })),
+    ]),
   );
   return {
     topics: topics.map((t) => ({
@@ -127,9 +135,14 @@ export function toHandoffVisits(card: CustomerCard): HandoffVisit[] {
     temperature: v.temperature as TemperatureCode,
     topics: v.topics.map((t) => ({ code: t.topic.code, label: t.topic.label })),
     checkedItemIds: v.topics.flatMap((t) => t.checks.map((c) => c.checklistItemId)),
-    openActions: v.nextActions
-      .filter((a) => a.doneAt === null)
-      .map((a) => ({ kind: a.kind as NextActionKindCode, note: a.note })),
+    unclearItemIds: v.topics.flatMap((t) =>
+      t.checks.filter((c) => c.understandingUnclear).map((c) => c.checklistItemId),
+    ),
+    actions: v.nextActions.map((a) => ({
+      kind: a.kind as NextActionKindCode,
+      note: a.note,
+      done: a.doneAt !== null,
+    })),
   }));
 }
 
@@ -291,7 +304,12 @@ async function insertVisit(
     });
     if (input.checks.length > 0) {
       await tx.visitCheck.createMany({
-        data: input.checks.map((c) => ({ visitId: visit.id, ...c })),
+        data: input.checks.map((c) => ({
+          visitId: visit.id,
+          topicId: c.topicId,
+          checklistItemId: c.checklistItemId,
+          understandingUnclear: c.unclear,
+        })),
       });
     }
     if (input.actions.length > 0) {

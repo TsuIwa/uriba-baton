@@ -146,10 +146,15 @@ model Topic {
 
 /// 用件ごとの「案内すること」の目録
 model ChecklistItem {
-  id        Int    @id @default(autoincrement())
-  topicId   Int    @map("topic_id")
-  label     String @db.VarChar(40)
-  sortOrder Int    @map("sort_order")
+  id               Int       @id @default(autoincrement())
+  topicId          Int       @map("topic_id")
+  label            String    @db.VarChar(40)
+  sortOrder        Int       @map("sort_order")
+  /// 料金・キャンペーンのように、時期によって中身が変わる項目か
+  isVolatile       Boolean   @default(false) @map("is_volatile")
+  /// 最後に中身が変わった日(店長が入れる想定。この版は seed で入れる)。
+  /// この日より前に説明していたら「変更あり:必ず案内」にする
+  contentRevisedOn DateTime? @map("content_revised_on") @db.Date
 
   topic       Topic        @relation(fields: [topicId], references: [id], onDelete: Restrict)
   visitChecks VisitCheck[]
@@ -178,9 +183,11 @@ model VisitTopic {
 /// (visit_id, topic_id) を visit_topics に、(checklist_item_id, topic_id) を checklist_items に
 /// つないでいるので「選んでいない用件の項目にチェックがつく」ことをDBが止める
 model VisitCheck {
-  visitId         String @map("visit_id") @db.Uuid
-  topicId         Int    @map("topic_id")
-  checklistItemId Int    @map("checklist_item_id")
+  visitId              String  @map("visit_id") @db.Uuid
+  topicId              Int     @map("topic_id")
+  checklistItemId      Int     @map("checklist_item_id")
+  /// 案内したが、お客様の理解があいまいだった(任意の印。次の人はもう一度詳しく案内する)
+  understandingUnclear Boolean @default(false) @map("understanding_unclear")
 
   visitTopic    VisitTopic    @relation(fields: [visitId, topicId], references: [visitId, topicId], onDelete: Cascade)
   checklistItem ChecklistItem @relation(fields: [checklistItemId, topicId], references: [id, topicId], onDelete: Restrict)

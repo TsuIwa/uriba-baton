@@ -13,6 +13,8 @@ import {
   toHandoffVisits,
 } from "@/lib/queries";
 import type { VisitInput } from "@/lib/visit-input";
+import { buildHandoffSummary, buildTalkHints } from "@/lib/handoff";
+import { ymdToDbDate } from "@/lib/dates";
 
 let storeId: number;
 let regularId: number;
@@ -30,7 +32,7 @@ function input(over: Partial<VisitInput> = {}): VisitInput {
     requestId: randomUUID(),
     customer: { kind: "new", nameKana: "テスト タロウ", phoneLast4: "9999" },
     topicIds: [mnp.id],
-    checks: [{ topicId: mnp.id, checklistItemId: mnp.items[0].id }],
+    checks: [{ topicId: mnp.id, checklistItemId: mnp.items[0].id, unclear: false }],
     temperature: "CONSIDERING",
     actions: [{ kind: "QUOTE", note: null }],
     nextVisitDate: null,
@@ -181,7 +183,7 @@ describe("DBの制約が守っていること", () => {
         regularId,
         input({
           customer: { kind: "new", nameKana: "シッパイ ゴロウ", phoneLast4: "5555" },
-          checks: [{ topicId: hikari.id, checklistItemId: hikari.items[0].id }],
+          checks: [{ topicId: hikari.id, checklistItemId: hikari.items[0].id, unclear: false }],
         }),
       ),
     ).rejects.toThrow();
@@ -327,5 +329,70 @@ describe("記録時点の役割と、記録の出どころ", () => {
     const next = (await getTodayBoard(storeId, now)).stats;
     expect(next.all).toEqual(base.all);
     expect(next.sample.count).toBe(base.sample.count + 1);
+  });
+});
+
+describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
+  it("あいまいの印・中身の改定・前々回の未完了の約束が、要約とヒントに出る", async () => {
+    // MNP の「キャンペーン」を探す(seed の目録)
+    const camp = await prisma.checklistItem.findFirstOrThrow({
+      where: { topicId: mnp.id, label: "キャンペーン" },
+    });
+    const price = await prisma.checklistItem.findFirstOrThrow({ where: { topicId: mnp.id, label: "端末価格" } });
+    const before = { isVolatile: camp.isVolatile, contentRevisedOn: camp.contentRevisedOn };
+
+    try {
+      // 9/20 中村…ではなく、テスト用の常勤が「キャンペーン」を説明し、入荷連絡を約束(未完了のまま)
+      const { customerId } = await createVisit(
+        storeId,
+        regularId,
+        input({
+          customer: { kind: "new", nameKana: "ゲンバ ハンダン", phoneLast4: "8080" },
+          checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false }],
+          actions: [{ kind: "STOCK", note: null }],
+        }),
+        jst("2026-09-20T12:00:00"),
+      );
+      // 9/27 イベントスタッフが「端末価格」を案内(理解があいまい)、見積もりを約束
+      await createVisit(
+        storeId,
+        eventId,
+        input({
+          customer: { kind: "existing", id: customerId },
+          checks: [{ topicId: mnp.id, checklistItemId: price.id, unclear: true }],
+          actions: [{ kind: "QUOTE", note: null }],
+        }),
+        jst("2026-09-27T12:00:00"),
+      );
+      // 10/1 にキャンペーンの中身が変わった
+      await prisma.checklistItem.update({
+        where: { id: camp.id },
+        data: { isVolatile: true, contentRevisedOn: ymdToDbDate("2026-10-01") },
+      });
+
+      const catalog = await getCatalog();
+      const card = await getCustomerCard(storeId, customerId);
+      const visits = toHandoffVisits(card!);
+      const s = buildHandoffSummary(visits, catalog.checklist);
+      expect(s.text).toContain("済んでいるか試験 常勤さんに確認してから進める");
+      expect(s.text).toContain("変更あり:キャンペーン");
+      expect(s.text).toContain("前回あいまいだった:端末価格");
+      const hints = buildTalkHints(visits, catalog.checklist);
+      expect(hints[0]).toContain("試験 常勤さんの「入荷・在庫の連絡」が未完了のまま");
+      expect(hints[1]).toContain("見積もりを作りながら詳細を案内する");
+      expect(hints[2]).toContain("変更あり:「キャンペーン」");
+    } finally {
+      await prisma.checklistItem.update({ where: { id: camp.id }, data: before });
+    }
+  });
+
+  it("改定日は「中身が変わる項目」にしか入らない(CHECK制約)", async () => {
+    const item = await prisma.checklistItem.findFirstOrThrow({ where: { isVolatile: false } });
+    await expect(
+      prisma.checklistItem.update({
+        where: { id: item.id },
+        data: { contentRevisedOn: ymdToDbDate("2026-10-01") },
+      }),
+    ).rejects.toThrow();
   });
 });

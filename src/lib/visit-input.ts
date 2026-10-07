@@ -15,7 +15,8 @@ export type VisitInput = {
   requestId: string;
   customer: { kind: "existing"; id: string } | { kind: "new"; nameKana: string; phoneLast4: string };
   topicIds: number[];
-  checks: { topicId: number; checklistItemId: number }[];
+  /** unclear = 案内したが、お客様の理解があいまいだった(任意の印) */
+  checks: { topicId: number; checklistItemId: number; unclear: boolean }[];
   temperature: TemperatureCode;
   actions: { kind: NextActionKindCode; note: string | null }[];
   nextVisitDate: string | null;
@@ -108,13 +109,18 @@ export function parseVisitInput(raw: unknown, ctx: ParseContext): ParseResult {
 
   // 案内したこと:選んだ用件の項目だけ受け付ける
   const checks: VisitInput["checks"] = [];
-  for (const itemId of new Set(asIntArray(r.checklistItemIds))) {
+  const checkedIds = new Set(asIntArray(r.checklistItemIds));
+  const unclearIds = new Set(asIntArray(r.unclearItemIds));
+  if ([...unclearIds].some((id) => !checkedIds.has(id))) {
+    errors.push("案内したこと:「理解があいまい」は、チェックした項目にだけ付けられます");
+  }
+  for (const itemId of checkedIds) {
     const topicId = ctx.itemTopic.get(itemId);
     if (topicId === undefined || !topicIds.includes(topicId)) {
       errors.push("案内したこと:選んでいない用件の項目にチェックがあります。用件を選ぶか、チェックを外してください");
       break;
     }
-    checks.push({ topicId, checklistItemId: itemId });
+    checks.push({ topicId, checklistItemId: itemId, unclear: unclearIds.has(itemId) });
   }
 
   // 温度感(必須)

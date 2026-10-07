@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { addDays, formatYmdShort, jstDateString, jstWeekRange, ymdToDbDate } from "../dates";
 import { isValidKana, normalizeKana, parseCustomerQuery } from "../kana";
-import { elapsedSeconds, summarizeInputSeconds } from "../stats";
+import { elapsedSeconds, inputSeconds, summarizeInputSeconds } from "../stats";
 
 describe("日付(日本時間)", () => {
   it("UTCでは前日でも、日本時間で日付を決める", () => {
@@ -78,6 +78,19 @@ describe("elapsedSeconds", () => {
   it("マイナスは0、1時間超は3600にそろえる", () => {
     expect(elapsedSeconds(10_000, 5_000)).toBe(0);
     expect(elapsedSeconds(0, 5_000_000)).toBe(3600);
+  });
+});
+
+describe("inputSeconds(入力にかかった秒数)", () => {
+  it("画面を開いてから放置した時間は数えず、最初の入力から保存までを数える", () => {
+    const openedAt = 0;
+    const firstTapAt = 276_000; // 開いたまま4分半接客してから、最初のタップ
+    const savedAt = 300_000;
+    expect(inputSeconds(firstTapAt, savedAt)).toBe(24);
+    expect(inputSeconds(firstTapAt, savedAt)).not.toBe(elapsedSeconds(openedAt, savedAt));
+  });
+  it("一度も入力していなければ0秒", () => {
+    expect(inputSeconds(null, 300_000)).toBe(0);
   });
 });
 

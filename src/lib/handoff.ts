@@ -1,16 +1,34 @@
 // お客様カードの一番上に出す「次の人へ」の要約と、「話す順のヒント」。
 // AIは使わず、決まったルールで組み立てる(同じ記録なら毎回同じ文になる=説明できる)。
+//
+// 次のルールは、現場の判断(制作者=携帯売り場14年が決めた所)に沿っている。
+// 原文は docs/04_AIとの作業記録.md の「現場の判断」。
+//   1. 次にやることは、未完了と完了で話す文を分ける(未完了の見積もりは「作りながら案内」)
+//   2. 前回より前の記録に残っている未完了の約束も拾い、担当者に済んでいるか確認してから進める
+//   3. 説明済みかどうかは日数で切らず、お客様の理解度で決める
+//      - 前回「理解があいまい」だった項目は、もう一度詳しく案内する
+//      - それ以外の説明済みは、まず理解度を伺い、必要ならもう一度詳しく
+//      - 中身が変わる項目(料金・キャンペーンなど)は、説明のあとに変わっていたら必ず案内する
 
 import {
+  NEXT_ACTION_LABEL,
   STAFF_ROLE_LABEL,
   type NextActionKindCode,
   type StaffRoleCode,
   type TemperatureCode,
-  nextActionText,
 } from "./catalog";
-import { formatJstShort } from "./dates";
+import { formatJstShort, jstDateString } from "./dates";
 
-export type ChecklistCatalog = Record<string, { id: number; label: string }[]>;
+export type ChecklistItemInfo = {
+  id: number;
+  label: string;
+  /** 料金・キャンペーンのように中身が変わる項目か */
+  volatile?: boolean;
+  /** 最後に中身が変わった日 "YYYY-MM-DD"(なければ null) */
+  revisedOn?: string | null;
+};
+
+export type ChecklistCatalog = Record<string, ChecklistItemInfo[]>;
 
 /** 要約に必要な、1回分の記録 */
 export type HandoffVisit = {
@@ -18,32 +36,127 @@ export type HandoffVisit = {
   staff: { name: string; role: StaffRoleCode };
   temperature: TemperatureCode;
   topics: { code: string; label: string }[];
+  /** 案内した項目 */
   checkedItemIds: number[];
-  openActions: { kind: NextActionKindCode; note: string | null }[];
+  /** そのうち、お客様の理解があいまいだった項目 */
+  unclearItemIds: number[];
+  /** その記録の「次にやること」(済んだものも含む) */
+  actions: { kind: NextActionKindCode; note: string | null; done: boolean }[];
+};
+
+/**
+ * 案内項目の状況。
+ * - NOT_YET:まだ一度も案内していない
+ * - CHANGED:中身が変わる項目で、最後に案内した日以降に中身が変わった(必ず案内)
+ * - UNCLEAR:最後に案内したとき、理解があいまいだった(もう一度詳しく)
+ * - EXPLAINED:案内済み(まず理解度を伺う)
+ */
+export type ItemState = "NOT_YET" | "CHANGED" | "UNCLEAR" | "EXPLAINED";
+
+export type ItemStatus = {
+  id: number;
+  label: string;
+  topicLabel: string;
+  state: ItemState;
+  /** 最後に案内した日 "YYYY-MM-DD"(まだなら null) */
+  lastExplainedOn: string | null;
+};
+
+/** 前回より前の記録に残っている、未完了の約束 */
+export type StaleAction = {
+  visitedAt: Date;
+  staffName: string;
+  kind: NextActionKindCode;
+  note: string | null;
 };
 
 export type HandoffSummary = {
-  /** 1〜2文の要約 */
+  /** 要約の文 */
   text: string;
-  /** 前回の用件のうち、これまでの全記録でまだ案内していない項目(話す順) */
+  /** 次に案内する項目(未案内・変更あり・あいまい。話す順) */
   remaining: string[];
+  items: ItemStatus[];
+  staleActions: StaleAction[];
 };
 
 const MAX_NEXT_ITEMS = 2;
+export const MAX_HINTS = 3;
+
+export const ITEM_STATE_LABEL: Record<ItemState, string> = {
+  NOT_YET: "まだ",
+  CHANGED: "変更あり:必ず案内",
+  UNCLEAR: "前回あいまい:もう一度詳しく",
+  EXPLAINED: "説明済み:まず理解度を伺う",
+};
 
 function joinLabels(labels: string[]): string {
   return labels.join("・");
 }
 
-/** 前回の用件について、まだ案内していない項目を話す順に並べる */
-export function remainingItems(
-  topics: { code: string }[],
-  coveredItemIds: Set<number>,
-  catalog: ChecklistCatalog,
-): string[] {
-  return topics.flatMap((t) =>
-    (catalog[t.code] ?? []).filter((item) => !coveredItemIds.has(item.id)).map((i) => i.label),
+function actionLabel(kind: NextActionKindCode, note: string | null): string {
+  if (kind === "OTHER") return note?.trim() || "その他";
+  return NEXT_ACTION_LABEL[kind];
+}
+
+/**
+ * 前回の用件の、案内項目ごとの状況(目録の話す順)。
+ * 「説明済み」に期限は付けない。改定日と案内日が同じ日は、どちらが先か分からないので
+ * CHANGED に倒す(必ず案内する方)。CHANGED は UNCLEAR より優先する。
+ */
+export function itemStatuses(visits: HandoffVisit[], catalog: ChecklistCatalog): ItemStatus[] {
+  const last = visits[0];
+  if (!last) return [];
+  // 項目ごとに「最後に案内した日」と「そのとき理解があいまいだったか」
+  // visits は新しい順なので、最初に見つかったものが最後の案内
+  const latest = new Map<number, { on: string; unclear: boolean }>();
+  for (const v of visits) {
+    const on = jstDateString(v.visitedAt);
+    const unclear = new Set(v.unclearItemIds);
+    for (const id of v.checkedItemIds) {
+      if (!latest.has(id)) latest.set(id, { on, unclear: unclear.has(id) });
+    }
+  }
+  return last.topics.flatMap((t) =>
+    (catalog[t.code] ?? []).map((item) => {
+      const explained = latest.get(item.id) ?? null;
+      let state: ItemState;
+      if (!explained) state = "NOT_YET";
+      else if (item.volatile && item.revisedOn && item.revisedOn >= explained.on) state = "CHANGED";
+      else if (explained.unclear) state = "UNCLEAR";
+      else state = "EXPLAINED";
+      return {
+        id: item.id,
+        label: item.label,
+        topicLabel: t.label,
+        state,
+        lastExplainedOn: explained?.on ?? null,
+      };
+    }),
   );
+}
+
+/** 前回より前の記録に残っている未完了の約束(古い順) */
+export function staleActions(visits: HandoffVisit[]): StaleAction[] {
+  return visits
+    .slice(1)
+    .flatMap((v) =>
+      v.actions
+        .filter((a) => !a.done)
+        .map((a) => ({ visitedAt: v.visitedAt, staffName: v.staff.name, kind: a.kind, note: a.note })),
+    )
+    .sort((a, b) => a.visitedAt.getTime() - b.visitedAt.getTime());
+}
+
+/** 例:「9/25(金) 中村 誠さんの「入荷・在庫の連絡」が未完了のまま。済んでいるか中村 誠さんに確認してから進める」 */
+export function staleActionText(a: StaleAction): string {
+  return `${formatJstShort(a.visitedAt)} ${a.staffName}さんの「${actionLabel(a.kind, a.note)}」が未完了のまま。済んでいるか${a.staffName}さんに確認してから進める`;
+}
+
+/** 次に案内する項目の表示名(変更あり・あいまいには印をつける) */
+function nextLabel(s: ItemStatus): string {
+  if (s.state === "CHANGED") return `${s.label}(変更あり)`;
+  if (s.state === "UNCLEAR") return `${s.label}(前回あいまい)`;
+  return s.label;
 }
 
 /**
@@ -56,49 +169,91 @@ export function buildHandoffSummary(
 ): HandoffSummary {
   const last = visits[0];
   if (!last) {
-    return { text: "初めてのお客様です。用件を聞くところから始めてください。", remaining: [] };
+    return {
+      text: "初めてのお客様です。用件を聞くところから始めてください。",
+      remaining: [],
+      items: [],
+      staleActions: [],
+    };
   }
 
   const who = `${last.staff.name}(${STAFF_ROLE_LABEL[last.staff.role]})`;
   const when = formatJstShort(last.visitedAt);
   const topicText = `「${joinLabels(last.topics.map((t) => t.label))}」`;
+  const items = itemStatuses(visits, catalog);
+  const stale = staleActions(visits);
+  const byState = (s: ItemState) => items.filter((i) => i.state === s);
 
-  // 前回チェックした項目(目録の並び順で出す)
+  // 1文目:前回その日に何をしたか(この日の話だけ。これまで全体の話は2文目以降)
   const lastChecked = new Set(last.checkedItemIds);
-  const doneLabels = last.topics.flatMap((t) =>
-    (catalog[t.code] ?? []).filter((i) => lastChecked.has(i.id)).map((i) => i.label),
-  );
+  const doneThatDay = items.filter((i) => lastChecked.has(i.id)).map((i) => i.label);
+  const sentences: string[] = [
+    doneThatDay.length > 0
+      ? `前回 ${when} ${who}が${topicText}で ${joinLabels(doneThatDay)} まで案内。`
+      : `前回 ${when} ${who}が${topicText}の用件を伺った(この日の案内はなし)。`,
+  ];
 
-  // 「まだ」は全記録を合わせて判断する(前々回に説明済みなら繰り返さない)
-  const covered = new Set(visits.flatMap((v) => v.checkedItemIds));
-  const remaining = remainingItems(last.topics, covered, catalog);
+  // 前回より前の未完了の約束は、担当者に確認してから
+  for (const a of stale) sentences.push(`${staleActionText(a)}。`);
 
-  const first =
-    doneLabels.length > 0
-      ? `前回 ${when} ${who}が${topicText}で ${joinLabels(doneLabels)} まで案内済み。`
-      : `前回 ${when} ${who}が${topicText}の用件を伺っただけで、案内はまだ。`;
-
-  let second: string;
-  if (remaining.length > 0) {
-    second = `次は ${joinLabels(remaining.slice(0, MAX_NEXT_ITEMS))} から。`;
-  } else if (last.openActions.length > 0) {
-    const a = last.openActions[0];
-    second = `案内は一通り済み。次は「${nextActionText(a.kind, a.note)}」の続きから。`;
-  } else {
-    second = "案内は一通り済み。次は手続きに進めるかの確認から。";
+  // ここから:これまで全体で見た状況
+  const changed = byState("CHANGED");
+  if (changed.length > 0) {
+    sentences.push(
+      `変更あり:${joinLabels(changed.map((i) => i.label))} は前回の説明のあとに中身が変わったので必ず案内。`,
+    );
+  }
+  const unclear = byState("UNCLEAR");
+  if (unclear.length > 0) {
+    sentences.push(`前回あいまいだった:${joinLabels(unclear.map((i) => i.label))} はもう一度詳しく案内。`);
   }
 
-  return { text: first + second, remaining };
+  const next = items.filter((i) => i.state !== "EXPLAINED");
+  if (next.length > 0) {
+    sentences.push(`次は ${joinLabels(next.slice(0, MAX_NEXT_ITEMS).map(nextLabel))} から。`);
+  } else {
+    const open = last.actions.find((a) => !a.done);
+    sentences.push(
+      open
+        ? `これまでに一通り案内済み。次は「${actionLabel(open.kind, open.note)}」の続きから。`
+        : "これまでに一通り案内済み。次は手続きに進めるかの確認から。",
+    );
+  }
+
+  const explained = byState("EXPLAINED");
+  if (explained.length > 0) {
+    sentences.push(
+      `説明済み:${joinLabels(explained.map((i) => i.label))} はまず理解度を伺い、必要ならもう一度詳しく。`,
+    );
+  }
+
+  return { text: sentences.join(""), remaining: next.map((i) => i.label), items, staleActions: stale };
 }
 
-const ACTION_HINT: Record<NextActionKindCode, (note: string | null) => string> = {
+/** 次にやることが「まだ」のときに話すこと */
+const OPEN_ACTION_HINT: Record<NextActionKindCode, (note: string | null) => string> = {
+  QUOTE: () =>
+    "見積もりを作りながら詳細を案内する(声かけの例:『詳細を見積もりを作りながら、ご案内させていただきますね』)",
+  FAMILY: () => "ご家族と相談できたかを聞く",
+  DOCUMENTS: () => "本人確認書類などがそろっているか、先に確かめる",
+  STOCK: () => "入荷・在庫の状況を確かめてから伝える(連絡はまだ)",
+  CALLBACK: () => "こちらからの連絡がまだ。連絡するはずだった件から話す",
+  OTHER: (note) => `「${note?.trim() || "前回の約束"}」がまだ済んでいない。その件から話す`,
+};
+
+/** 次にやることが「済み」のときに話すこと */
+const DONE_ACTION_HINT: Record<NextActionKindCode, (note: string | null) => string> = {
   QUOTE: () => "お渡しした見積もりの感想から聞く",
   FAMILY: () => "ご家族と相談した結果から聞く",
-  DOCUMENTS: () => "本人確認書類などがそろっているか、先に確かめる",
-  STOCK: () => "入荷・在庫の状況を先に伝える",
+  DOCUMENTS: () => "そろった書類で手続きに進めるか確かめる",
+  STOCK: () => "お伝えした入荷・在庫の件から話す",
   CALLBACK: () => "前回こちらから連絡した件から話す",
-  OTHER: (note) => `「${note?.trim() || "前回の約束"}」の件から話す`,
+  OTHER: (note) => `「${note?.trim() || "前回の約束"}」がどうなったか確かめる`,
 };
+
+export function actionHint(kind: NextActionKindCode, note: string | null, done: boolean): string {
+  return (done ? DONE_ACTION_HINT : OPEN_ACTION_HINT)[kind](note);
+}
 
 const TEMPERATURE_HINT: Record<TemperatureCode, string> = {
   POSITIVE: "手続きに進めるか確かめる(かかる時間を先に伝える)",
@@ -107,29 +262,53 @@ const TEMPERATURE_HINT: Record<TemperatureCode, string> = {
   NOT_NOW: "無理に勧めず、前回から変わったことを聞く",
 };
 
-export const MAX_HINTS = 3;
-
 /**
- * 話す順のヒント(最大3つ)。
- * 並び: ①約束していたこと(次にやること)→ ②温度感に合わせた一言 → ③まだ案内していない項目。
- * 3つに届かなければ、残りの約束・未案内の項目で埋める。
+ * 話す順のヒント(最大3つ)。並び:
+ * ①前回より前の未完了の約束(担当者に確認してから)
+ * ②前回の未完了の約束
+ * ③中身が変わった項目(必ず案内)
+ * ④前回あいまいだった項目(もう一度詳しく)
+ * ⑤温度感に合わせた一言
+ * ⑥まだ案内していない項目
+ * ⑦前回済んだ約束の続き
+ * 3つに届かなければ、残りと「説明済みは理解度を伺う」で埋める。
  */
 export function buildTalkHints(visits: HandoffVisit[], catalog: ChecklistCatalog): string[] {
   const last = visits[0];
   if (!last) return ["用件を聞く(機種変更・のりかえ・光回線など)"];
 
-  const actionHints = last.openActions.map((a) => ACTION_HINT[a.kind](a.note));
-  const covered = new Set(visits.flatMap((v) => v.checkedItemIds));
-  const itemHints = remainingItems(last.topics, covered, catalog).map(
-    (label) => `まだ案内していない「${label}」を説明する`,
+  const items = itemStatuses(visits, catalog);
+  const labelsOf = (s: ItemState) => items.filter((i) => i.state === s).map((i) => i.label);
+
+  const staleHints = staleActions(visits).map(staleActionText);
+  const openHints = last.actions.filter((a) => !a.done).map((a) => actionHint(a.kind, a.note, false));
+  const doneHints = last.actions.filter((a) => a.done).map((a) => actionHint(a.kind, a.note, true));
+  const changedHints = labelsOf("CHANGED").map(
+    (l) => `変更あり:「${l}」は前回の説明のあとに中身が変わったので必ず案内する`,
   );
+  const unclearHints = labelsOf("UNCLEAR").map((l) => `前回あいまいだった「${l}」をもう一度詳しく案内する`);
+  const notYetHints = labelsOf("NOT_YET").map((l) => `まだ案内していない「${l}」を説明する`);
+  const explained = labelsOf("EXPLAINED");
+  const confirmHint =
+    explained.length > 0
+      ? `説明済みの「${joinLabels(explained.slice(0, 2))}」は、まず理解度を伺い、必要ならもう一度詳しく案内する`
+      : undefined;
 
   const ordered = [
-    actionHints[0],
+    staleHints[0],
+    openHints[0],
+    changedHints[0],
+    unclearHints[0],
     TEMPERATURE_HINT[last.temperature],
-    itemHints[0],
-    ...actionHints.slice(1),
-    ...itemHints.slice(1),
+    notYetHints[0],
+    doneHints[0],
+    ...staleHints.slice(1),
+    ...openHints.slice(1),
+    ...changedHints.slice(1),
+    ...unclearHints.slice(1),
+    ...notYetHints.slice(1),
+    ...doneHints.slice(1),
+    confirmHint,
   ].filter((h): h is string => typeof h === "string");
 
   return [...new Set(ordered)].slice(0, MAX_HINTS);

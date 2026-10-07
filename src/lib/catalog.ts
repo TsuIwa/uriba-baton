@@ -47,6 +47,22 @@ export function nextActionText(kind: NextActionKindCode, note: string | null): s
 }
 
 /**
+ * 時期によって中身が変わる案内項目(料金・キャンペーン・端末の値段など)。
+ * 前回の説明のあとに中身が変わっていたら、次の人は必ず案内し直す。
+ */
+export const VOLATILE_ITEM_LABELS = new Set([
+  "料金比較",
+  "料金プラン",
+  "端末価格",
+  "キャンペーン",
+  "月額料金",
+  "スマホとのセット割",
+  "プラン比較",
+  "家族割",
+  "解約金",
+]);
+
+/**
  * 用件と、用件ごとの「案内すること」。並び順 = 話す順。
  * seed はこの目録をそのままDBに入れる。
  */

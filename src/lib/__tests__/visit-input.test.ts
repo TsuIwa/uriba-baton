@@ -29,7 +29,7 @@ describe("parseVisitInput", () => {
     const r = parseVisitInput(base, ctx);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.checks).toEqual([{ topicId: 1, checklistItemId: 10 }]);
+    expect(r.value.checks).toEqual([{ topicId: 1, checklistItemId: 10, unclear: false }]);
     expect(r.value.actions).toEqual([{ kind: "QUOTE", note: null }]);
     expect(r.value.memo).toBeNull(); // 空白だけの自由記入は空にする
     expect(r.value.nextVisitDate).toBe("2027-01-02"); // 年をまたぐ予定日も通る
@@ -135,5 +135,16 @@ describe("parseVisitInput", () => {
     expect(r.ok).toBe(false);
     if (r.ok) return;
     for (const e of r.errors) expect(e).toMatch(/^(お客様|用件|温度感):/);
+  });
+
+  it("「理解があいまい」の印は、チェックした項目にだけ付けられる", () => {
+    const r = parseVisitInput({ ...base, checklistItemIds: [10, 11], unclearItemIds: [11] }, ctx);
+    expect(r.ok && r.value.checks).toEqual([
+      { topicId: 1, checklistItemId: 10, unclear: false },
+      { topicId: 1, checklistItemId: 11, unclear: true },
+    ]);
+    const bad = parseVisitInput({ ...base, checklistItemIds: [10], unclearItemIds: [11] }, ctx);
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors[0]).toContain("チェックした項目にだけ");
   });
 });
