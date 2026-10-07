@@ -1,6 +1,6 @@
 "use client";
 
-// 画面下の切り替え。親指で届く位置に置く
+// 画面下の切り替え。親指で届く位置に置く。浮かせず、線1本で区切る(影は使わない)
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -15,7 +15,7 @@ export function NavBar() {
   // 記録画面では保存ボタンを下に固定するので、ナビは出さない
   if (pathname.startsWith("/record")) return null;
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-brand-line bg-white pb-[env(safe-area-inset-bottom)]">
+    <nav className="fixed inset-x-0 bottom-0 z-20 border-t border-baton-line bg-baton-men pb-[env(safe-area-inset-bottom)]">
       <ul className="mx-auto grid max-w-md grid-cols-3">
         {ITEMS.map((item) => {
           const active = item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
@@ -24,12 +24,13 @@ export function NavBar() {
             <li key={item.href}>
               <Link
                 href={item.href}
-                className={`flex min-h-14 items-center justify-center text-base font-bold ${
+                aria-current={active ? "page" : undefined}
+                className={`m-1.5 flex min-h-12 items-center justify-center text-base font-bold ${
                   primary
-                    ? "m-1.5 rounded-xl bg-brand text-white"
+                    ? "rounded-[10px] bg-baton-ai text-baton-on-ai active:bg-baton-ai-press"
                     : active
-                      ? "text-brand underline decoration-2 underline-offset-8"
-                      : "text-slate-500"
+                      ? "text-baton-ai underline decoration-2 underline-offset-8"
+                      : "text-baton-sub"
                 }`}
               >
                 {item.label}

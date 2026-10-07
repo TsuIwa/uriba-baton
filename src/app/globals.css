@@ -7,7 +7,7 @@
   - baton-ki(黄):前回あいまい だけ。塗りには必ず ki-line の縁と「?」を付ける
   - イベント印は色を作らない(白地なら ai の線、藍地なら on-ai の線)
   ダークモードは作らない(照明の明るい売り場で使う前提)。
-  brand / accent は今の画面が使っている旧色。画面を baton に移し終えたら外す。
+  旧色(brand / accent)は画面を baton に移し終えたので外した(2026-10-07)。
 */
 @theme {
   --color-baton-ai: #112640;
@@ -34,17 +34,63 @@
   --color-baton-ji: #f3f5f8;
   --color-baton-men: #ffffff;
 
-  --color-brand: #1f3b5c;
-  --color-brand-soft: #e9eff6;
-  --color-brand-line: #c9d6e4;
-  --color-accent: #d4570f;
-  --color-accent-soft: #fdf0e7;
-  --font-sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic UI",
-    system-ui, sans-serif;
+  /* 書体は layout.tsx の next/font(BIZ UDPGothic)。読み込めない時はヒラギノへ */
+  --font-sans: var(--font-biz-ud), "BIZ UDPGothic", "Hiragino Sans", "Hiragino Kaku Gothic ProN", sans-serif;
 }
 
 body {
-  background: #f5f7fa;
-  color: #1c2530;
+  background: var(--color-baton-ji);
+  color: var(--color-baton-moji);
   -webkit-tap-highlight-color: transparent;
+}
+
+/* フォーカスの輪は「次の一言」の藍(白地で 6.80:1) */
+:focus-visible {
+  outline: 3px solid var(--color-baton-next);
+  outline-offset: 2px;
+}
+
+/* 畳んだ所(説明済み・これまでの記録)を開く動き。07 §1「動き」:高さ 200ms */
+details {
+  interpolate-size: allow-keywords;
+}
+details::details-content {
+  block-size: 0;
+  overflow: hidden;
+  transition:
+    block-size 200ms ease-out,
+    content-visibility 200ms allow-discrete;
+}
+details[open]::details-content {
+  block-size: auto;
+}
+details > summary {
+  list-style: none;
+}
+details > summary::-webkit-details-marker {
+  display: none;
+}
+details[open] .when-open-rotate {
+  transform: rotate(180deg);
+}
+
+/* 記録画面で開いた段:160ms で下から出す */
+@keyframes step-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.step-in {
+  animation: step-in 160ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after,
+  details::details-content {
+    animation: none !important;
+    transition: none !important;
+  }
 }

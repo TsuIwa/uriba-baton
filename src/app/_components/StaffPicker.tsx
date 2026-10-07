@@ -20,7 +20,8 @@ export function StaffPicker({ staff, currentId }: Props) {
   ];
   return (
     <form ref={formRef} action={setCurrentStaff} className="flex items-center gap-2" key={currentId ?? "none"}>
-      <label htmlFor="staffId" className="shrink-0 text-[11px] leading-tight text-white/80">
+      {/* 幅360px未満では見出しを読み上げ用だけにして、名前が切れないようにする */}
+      <label htmlFor="staffId" className="shrink-0 text-xs leading-tight text-baton-on-ai-sub max-[359px]:sr-only">
         今の
         <br />
         スタッフ
@@ -30,8 +31,8 @@ export function StaffPicker({ staff, currentId }: Props) {
         name="staffId"
         defaultValue={currentId ?? ""}
         onChange={() => formRef.current?.requestSubmit()}
-        className={`min-h-11 w-full min-w-0 rounded-lg border-0 px-2 text-base font-bold ${
-          currentId ? "bg-white text-brand" : "bg-accent text-white"
+        className={`min-h-11 w-full min-w-0 rounded-[10px] border-0 px-2 text-base font-bold max-[359px]:px-1.5 max-[359px]:text-[15px] ${
+          currentId ? "bg-baton-men text-baton-ai" : "bg-baton-shu text-baton-on-shu"
         }`}
         aria-label="今のスタッフ"
       >
@@ -47,7 +48,7 @@ export function StaffPicker({ staff, currentId }: Props) {
           </optgroup>
         ))}
       </select>
-      {current?.role === "EVENT" ? <EventBadge /> : null}
+      {current?.role === "EVENT" ? <EventBadge onAi /> : null}
     </form>
   );
 }

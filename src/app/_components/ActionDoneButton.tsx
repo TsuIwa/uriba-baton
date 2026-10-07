@@ -8,7 +8,7 @@ export function ActionDoneButton({ actionId, back }: { actionId: string; back?: 
       {back ? <input type="hidden" name="back" value={back} /> : null}
       <button
         type="submit"
-        className="min-h-11 rounded-lg border border-brand px-3 text-sm font-bold text-brand active:bg-brand-soft"
+        className="min-h-11 min-w-14 rounded-[10px] border-2 border-baton-ai bg-baton-men px-3 text-base font-bold text-baton-ai active:bg-baton-ji"
       >
         済み
       </button>
