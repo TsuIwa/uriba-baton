@@ -1,11 +1,39 @@
 @import "tailwindcss";
 
 /*
-  色は2つだけ:
-  - brand(藍):画面の土台・見出し・選んだ状態
-  - accent(橙):保存ボタンと、イベントスタッフの印だけ
+  配色は docs/08_配色.md(値の理由とコントラスト比)。
+  - baton-ai(藍):構造。バトン帯・ヘッダー・主ボタン・保存ボタン・選んだ状態
+  - baton-shu(朱):止まれ・必ずだけ(先に確認・変更あり・必ずのタグ)
+  - baton-ki(黄):前回あいまい だけ。塗りには必ず ki-line の縁と「?」を付ける
+  - イベント印は色を作らない(白地なら ai の線、藍地なら on-ai の線)
+  ダークモードは作らない(照明の明るい売り場で使う前提)。
+  brand / accent は今の画面が使っている旧色。画面を baton に移し終えたら外す。
 */
 @theme {
+  --color-baton-ai: #112640;
+  --color-baton-ai-press: #1e3d63;
+  --color-baton-on-ai: #ffffff;
+  --color-baton-on-ai-sub: #b8c7d9;
+  --color-baton-on-ai-line: #7f95af;
+  --color-baton-sample: #0a1828;
+  --color-baton-on-sample: #c9d6e4;
+  --color-baton-shu: #c8410b;
+  --color-baton-on-shu: #ffffff;
+  --color-baton-ki: #f2b705;
+  --color-baton-ki-line: #8a6300;
+  --color-baton-ki-soft: #fff6d6;
+  --color-baton-ki-text: #5c4400;
+  --color-baton-mada: #5b6878;
+  --color-baton-done: #3e6a8f;
+  --color-baton-done-soft: #dce6f1;
+  --color-baton-next: #2b5d93;
+  --color-baton-moji: #17212b;
+  --color-baton-sub: #5b6878;
+  --color-baton-line: #d5dde6;
+  --color-baton-line-strong: #7a8899;
+  --color-baton-ji: #f3f5f8;
+  --color-baton-men: #ffffff;
+
   --color-brand: #1f3b5c;
   --color-brand-soft: #e9eff6;
   --color-brand-line: #c9d6e4;
