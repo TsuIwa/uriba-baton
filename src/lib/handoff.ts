@@ -152,6 +152,23 @@ export function staleActionText(a: StaleAction): string {
   return `${formatJstShort(a.visitedAt)} ${a.staffName}さんの「${actionLabel(a.kind, a.note)}」が未完了のまま。済んでいるか${a.staffName}さんに確認してから進める`;
 }
 
+/**
+ * 要約用:同じ日・同じ担当者の未完了はまとめて1文にする。
+ * 例:「9/24(木) 小林 葵さんの「入荷・在庫の連絡」「家族と相談」が未完了のまま。済んでいるか小林 葵さんに確認してから進める」
+ */
+export function staleSummaryTexts(stale: StaleAction[]): string[] {
+  const groups = new Map<string, StaleAction[]>();
+  for (const a of stale) {
+    const key = `${a.visitedAt.getTime()}|${a.staffName}`;
+    groups.set(key, [...(groups.get(key) ?? []), a]);
+  }
+  return [...groups.values()].map((list) => {
+    const { visitedAt, staffName } = list[0];
+    const labels = list.map((a) => `「${actionLabel(a.kind, a.note)}」`).join("");
+    return `${formatJstShort(visitedAt)} ${staffName}さんの${labels}が未完了のまま。済んでいるか${staffName}さんに確認してから進める`;
+  });
+}
+
 /** 次に案内する項目の表示名(変更あり・あいまいには印をつける) */
 function nextLabel(s: ItemStatus): string {
   if (s.state === "CHANGED") return `${s.label}(変更あり)`;
@@ -194,7 +211,7 @@ export function buildHandoffSummary(
   ];
 
   // 前回より前の未完了の約束は、担当者に確認してから
-  for (const a of stale) sentences.push(`${staleActionText(a)}。`);
+  for (const t of staleSummaryTexts(stale)) sentences.push(`${t}。`);
 
   // ここから:これまで全体で見た状況
   const changed = byState("CHANGED");

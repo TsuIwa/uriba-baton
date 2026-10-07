@@ -186,6 +186,21 @@ describe("問2:前回より前の未完了の約束(Codex が再現した例)", 
     );
   });
 
+  it("同じ日・同じ担当者の未完了は、要約では1文にまとめる", () => {
+    const two = {
+      ...older,
+      actions: [
+        { kind: "STOCK" as const, note: null, done: false },
+        { kind: "FAMILY" as const, note: null, done: false },
+      ],
+    };
+    const text = buildHandoffSummary([visit(), two], catalog).text;
+    expect(text).toContain(
+      "9/25(金) 中村 誠さんの「入荷・在庫の連絡」「家族と相談」が未完了のまま。済んでいるか中村 誠さんに確認してから進める。",
+    );
+    expect(text.match(/確認してから進める/g)).toHaveLength(1);
+  });
+
   it("済んでいれば出さない", () => {
     const done = { ...older, actions: [{ kind: "STOCK" as const, note: null, done: true }] };
     expect(buildHandoffSummary([visit(), done], catalog).staleActions).toHaveLength(0);

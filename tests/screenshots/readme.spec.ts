@@ -8,10 +8,13 @@ test("README のスクショ", async ({ page }) => {
   await page.reload();
   await page.screenshot({ path: "docs/images/today.png" });
 
-  await page.goto("/customers?q=ハヤシ");
-  await page.getByRole("link", { name: /ハヤシ ソウタ/ }).click();
+  // 前々回の未完了の約束・キャンペーンの改定・理解があいまい、が全部出る見本のお客様
+  await page.goto("/customers?q=アベ");
+  await page.getByRole("link", { name: /アベ タクミ/ }).click();
   await page.getByTestId("handoff-summary").waitFor();
   await page.screenshot({ path: "docs/images/customer-card.png" });
+
+  await page.screenshot({ path: "docs/images/customer-card-full.png", fullPage: true });
 
   await page.getByRole("link", { name: "このお客様の記録を残す" }).click();
   await page.getByRole("button", { name: "検討中" }).waitFor();
