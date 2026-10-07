@@ -63,18 +63,21 @@ model Store {
 }
 
 model Staff {
-  id        Int       @id @default(autoincrement())
-  storeId   Int       @map("store_id")
-  name      String    @db.VarChar(50)
-  role      StaffRole
-  isActive  Boolean   @default(true) @map("is_active")
-  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  id          Int       @id @default(autoincrement())
+  storeId     Int       @map("store_id")
+  name        String    @db.VarChar(50)
+  /// 画面に出す呼び名(店内で一意)。名前は同じ人がいても、呼び名で見分ける
+  displayName String    @map("display_name") @db.VarChar(20)
+  role        StaffRole
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
 
   store            Store        @relation(fields: [storeId], references: [id], onDelete: Restrict)
   visits           Visit[]
   completedActions NextAction[] @relation("CompletedBy")
 
-  // 名前の一意制約は付けない(同じ名前のスタッフはありうる。画面では役割とIDで見分ける)
+  // 名前は一意にしない(同じ名前の人はありうる)。画面に出すのは店内で一意の呼び名
+  @@unique([storeId, displayName])
   @@map("staff")
 }
 

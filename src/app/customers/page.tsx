@@ -57,7 +57,7 @@ export default async function CustomersPage({ searchParams }: Props) {
                     {last ? (
                       <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-slate-600">
                         <span>前回 {formatJstShort(last.visitedAt)}</span>
-                        <StaffName name={last.staff.name} role={last.staffRoleAtVisit} />
+                        <StaffName name={last.staff.displayName} role={last.staffRoleAtVisit} />
                         {last.topics
                           .toSorted((a, b) => a.topic.sortOrder - b.topic.sortOrder)
                           .map((t) => (

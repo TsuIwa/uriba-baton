@@ -8,8 +8,8 @@ const input: VisitInput = {
   customer: { kind: "existing", id: "0b6f6a3e-6f1e-4c55-9a43-2a4f3c1d9e10" },
   topicIds: [2, 1],
   checks: [
-    { topicId: 1, checklistItemId: 11, unclear: false },
-    { topicId: 1, checklistItemId: 10, unclear: true },
+    { topicId: 1, checklistItemId: 11, unclear: false, shownVersion: 1 },
+    { topicId: 1, checklistItemId: 10, unclear: true, shownVersion: 1 },
   ],
   temperature: "CONSIDERING",
   actions: [{ kind: "QUOTE", note: null }],
@@ -33,6 +33,9 @@ describe("visitFingerprint(送った内容の指紋)", () => {
     expect(visitFingerprint({ ...input, temperature: "POSITIVE" })).not.toBe(visitFingerprint(input));
     expect(visitFingerprint({ ...input, memo: "追記" })).not.toBe(visitFingerprint(input));
     expect(visitFingerprint({ ...input, staffId: 2 })).not.toBe(visitFingerprint(input));
+    expect(
+      visitFingerprint({ ...input, checks: input.checks.map((c) => ({ ...c, shownVersion: 2 })) }),
+    ).not.toBe(visitFingerprint(input));
     expect(
       visitFingerprint({ ...input, checks: input.checks.map((c) => ({ ...c, unclear: false })) }),
     ).not.toBe(visitFingerprint(input));

@@ -36,7 +36,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
             </Link>
             <div className="flex-1">
               <StaffPicker
-                staff={staff.map((s) => ({ id: s.id, name: s.name, role: s.role }))}
+                staff={staff.map((s) => ({ id: s.id, name: s.displayName, role: s.role }))}
                 currentId={current?.id ?? null}
               />
             </div>

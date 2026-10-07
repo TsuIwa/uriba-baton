@@ -15,6 +15,7 @@ const ctx: ParseContext = {
 const base = {
   requestId: "7d1c2b9e-3f4a-4b6c-8d2e-1a0b9c8d7e6f",
   staffId: 1,
+  itemVersions: { 10: 1, 11: 2, 20: 1 },
   customer: { kind: "existing", id: "0b6f6a3e-6f1e-4c55-9a43-2a4f3c1d9e10" },
   topicIds: [1],
   checklistItemIds: [10],
@@ -30,7 +31,7 @@ describe("parseVisitInput", () => {
     const r = parseVisitInput(base, ctx);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.value.checks).toEqual([{ topicId: 1, checklistItemId: 10, unclear: false }]);
+    expect(r.value.checks).toEqual([{ topicId: 1, checklistItemId: 10, unclear: false, shownVersion: 1 }]);
     expect(r.value.actions).toEqual([{ kind: "QUOTE", note: null }]);
     expect(r.value.memo).toBeNull(); // 空白だけの自由記入は空にする
     expect(r.value.nextVisitDate).toBe("2027-01-02"); // 年をまたぐ予定日も通る
@@ -141,8 +142,8 @@ describe("parseVisitInput", () => {
   it("「理解があいまい」の印は、チェックした項目にだけ付けられる", () => {
     const r = parseVisitInput({ ...base, checklistItemIds: [10, 11], unclearItemIds: [11] }, ctx);
     expect(r.ok && r.value.checks).toEqual([
-      { topicId: 1, checklistItemId: 10, unclear: false },
-      { topicId: 1, checklistItemId: 11, unclear: true },
+      { topicId: 1, checklistItemId: 10, unclear: false, shownVersion: 1 },
+      { topicId: 1, checklistItemId: 11, unclear: true, shownVersion: 2 },
     ]);
     const bad = parseVisitInput({ ...base, checklistItemIds: [10], unclearItemIds: [11] }, ctx);
     expect(bad.ok).toBe(false);
@@ -178,5 +179,13 @@ describe("parseVisitInput", () => {
     const r = parseVisitInput({ ...base, staffId: undefined }, ctx);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.errors[0]).toMatch(/^担当者:/);
+  });
+
+  it("チェックした項目には、画面に出ていた版が要る", () => {
+    const r = parseVisitInput({ ...base, itemVersions: { 11: 1 } }, ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toContain("案内したこと:項目の版が読めません。画面を開き直してください");
+    expect(parseVisitInput({ ...base, itemVersions: { 10: "1" } }, ctx).ok).toBe(false);
+    expect(parseVisitInput({ ...base, itemVersions: { 10: 0 } }, ctx).ok).toBe(false);
   });
 });

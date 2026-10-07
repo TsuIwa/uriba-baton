@@ -70,7 +70,7 @@ export type SaveVisitResult = {
   ok: false;
   errors: string[];
   /** STAFF_MISMATCH=担当者が切り替わった/REQUEST_CONFLICT=同じ送信IDで中身が違う */
-  code?: "STAFF_MISMATCH" | "REQUEST_CONFLICT";
+  code?: "STAFF_MISMATCH" | "REQUEST_CONFLICT" | "CONTENT_CHANGED";
 };
 
 /** 記録を保存する。うまくいけばお客様カードへ移る */

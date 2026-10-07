@@ -24,8 +24,11 @@ export type VisitInput = {
   staffId: number;
   customer: { kind: "existing"; id: string } | { kind: "new"; nameKana: string; phoneLast4: string };
   topicIds: number[];
-  /** unclear = 案内したが、お客様の理解があいまいだった(任意の印) */
-  checks: { topicId: number; checklistItemId: number; unclear: boolean }[];
+  /**
+   * unclear = 案内したが、お客様の理解があいまいだった(任意の印)
+   * shownVersion = 記録画面に出ていた、その項目の中身の版(=説明した版)
+   */
+  checks: { topicId: number; checklistItemId: number; unclear: boolean; shownVersion: number }[];
   temperature: TemperatureCode;
   actions: { kind: NextActionKindCode; note: string | null }[];
   nextVisitDate: string | null;
@@ -147,6 +150,15 @@ export function parseVisitInput(raw: unknown, ctx: ParseContext): ParseResult {
     if (unclearIds.some((id) => !checkedIds.includes(id))) {
       errors.push("案内したこと:「理解があいまい」は、チェックした項目にだけ付けられます");
     }
+    // 画面に出ていた版:{ "項目id": 版 }。チェックした項目には必ず要る
+    const versions = isRecord(r.itemVersions) ? r.itemVersions : null;
+    const shownVersion = (id: number): number | null => {
+      const v = versions?.[String(id)];
+      return typeof v === "number" && Number.isInteger(v) && v >= 1 ? v : null;
+    };
+    if (checkedIds.some((id) => shownVersion(id) === null)) {
+      errors.push("案内したこと:項目の版が読めません。画面を開き直してください");
+    }
     for (const itemId of checkedIds) {
       const topicId = ctx.itemTopic.get(itemId);
       if (topicId === undefined || !(topicIds ?? []).includes(topicId)) {
@@ -155,7 +167,12 @@ export function parseVisitInput(raw: unknown, ctx: ParseContext): ParseResult {
         );
         break;
       }
-      checks.push({ topicId, checklistItemId: itemId, unclear: unclearIds.includes(itemId) });
+      checks.push({
+        topicId,
+        checklistItemId: itemId,
+        unclear: unclearIds.includes(itemId),
+        shownVersion: shownVersion(itemId) ?? 1,
+      });
     }
   }
 

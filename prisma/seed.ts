@@ -85,7 +85,8 @@ async function fill(tx: Tx) {
 
   const staff = [];
   for (const s of STAFF) {
-    staff.push(await tx.staff.create({ data: { ...s, storeId: store.id } }));
+    // 見本では名前がみな違うので、呼び名=名前にする
+    staff.push(await tx.staff.create({ data: { ...s, displayName: s.name, storeId: store.id } }));
   }
   const regulars = staff.filter((s) => s.role === "REGULAR");
   const events = staff.filter((s) => s.role === "EVENT");

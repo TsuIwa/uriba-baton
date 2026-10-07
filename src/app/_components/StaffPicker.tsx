@@ -3,10 +3,10 @@
 // 画面上部の「今のスタッフ」。選んだ瞬間に保存する(保存ボタンを押す手間をなくす)
 import { useRef } from "react";
 import { setCurrentStaff } from "@/app/actions";
-import { staffOptionLabel } from "@/lib/staff-label";
 import { EventBadge } from "./ui";
 
 type Props = {
+  /** name は呼び名(店内で一意) */
   staff: { id: number; name: string; role: "REGULAR" | "EVENT" }[];
   currentId: number | null;
 };
@@ -41,7 +41,7 @@ export function StaffPicker({ staff, currentId }: Props) {
           <optgroup key={g.label} label={g.label}>
             {g.list.map((s) => (
               <option key={s.id} value={s.id}>
-                {staffOptionLabel(s, staff)}
+                {s.name}
               </option>
             ))}
           </optgroup>

@@ -51,7 +51,8 @@ export async function getCatalog() {
       id: t.id,
       code: t.code,
       label: t.label,
-      items: t.checklistItems.map((i) => ({ id: i.id, label: i.label })),
+      // version = 画面に出した時点の中身の版。保存のときに今の版と比べる
+      items: t.checklistItems.map((i) => ({ id: i.id, label: i.label, version: i.contentVersion })),
     })),
     checklist,
     topicIds: new Set(topics.map((t) => t.id)),
@@ -66,7 +67,7 @@ const latestVisitSelect = {
     visitedAt: true,
     temperature: true,
     staffRoleAtVisit: true,
-    staff: { select: { name: true, role: true } },
+    staff: { select: { displayName: true, role: true } },
     topics: { select: { topic: { select: { label: true, sortOrder: true } } } },
   },
 } satisfies Prisma.Customer$visitsArgs;
@@ -133,7 +134,8 @@ export function toHandoffVisits(card: CustomerCard): HandoffVisit[] {
   return card.visits.map((v) => ({
     visitedAt: v.visitedAt,
     // 印は「記録した時点の役割」で出す(後で役割が変わっても過去の記録は変わらない)
-    staff: { name: v.staff.name, role: v.staffRoleAtVisit as StaffRoleCode },
+    // 画面に出すのは店内で一意の呼び名(名前は同じ人がいる)
+    staff: { name: v.staff.displayName, role: v.staffRoleAtVisit as StaffRoleCode },
     temperature: v.temperature as TemperatureCode,
     topics: v.topics.map((t) => ({ code: t.topic.code, label: t.topic.label })),
     checkedItemIds: v.topics.flatMap((t) => t.checks.map((c) => c.checklistItemId)),
@@ -218,7 +220,7 @@ export async function getTodayBoard(storeId: number, now: Date) {
 export class DomainError extends Error {
   constructor(
     message: string,
-    readonly code: "STAFF_MISMATCH" | "REQUEST_CONFLICT" | "OTHER" = "OTHER",
+    readonly code: "STAFF_MISMATCH" | "REQUEST_CONFLICT" | "CONTENT_CHANGED" | "OTHER" = "OTHER",
   ) {
     super(message);
   }
@@ -339,22 +341,28 @@ async function insertVisit(
       data: input.topicIds.map((topicId) => ({ visitId: visit.id, topicId })),
     });
     if (input.checks.length > 0) {
-      // 説明したときの中身の版を一緒に残す(あとで中身が変わったら「変更あり」になる)
-      const versions = new Map(
-        (
-          await tx.checklistItem.findMany({
-            where: { id: { in: input.checks.map((c) => c.checklistItemId) } },
-            select: { id: true, contentVersion: true },
-          })
-        ).map((i) => [i.id, i.contentVersion]),
+      // 説明した版 = 記録画面に出ていた版。保存までのあいだに中身が改定されていたら、
+      // 古い中身を説明したのか新しい中身を説明したのか分からないので、保存せずに確かめてもらう
+      const current = await tx.checklistItem.findMany({
+        where: { id: { in: input.checks.map((c) => c.checklistItemId) } },
+        select: { id: true, label: true, contentVersion: true },
+      });
+      const changed = current.filter(
+        (i) => input.checks.find((c) => c.checklistItemId === i.id)?.shownVersion !== i.contentVersion,
       );
+      if (changed.length > 0) {
+        throw new DomainError(
+          `${changed.map((i) => `「${i.label}」`).join("")}の中身が変わりました。もう一度確認してから保存してください`,
+          "CONTENT_CHANGED",
+        );
+      }
       await tx.visitCheck.createMany({
         data: input.checks.map((c) => ({
           visitId: visit.id,
           topicId: c.topicId,
           checklistItemId: c.checklistItemId,
           understandingUnclear: c.unclear,
-          explainedVersion: versions.get(c.checklistItemId) ?? 1,
+          explainedVersion: c.shownVersion,
         })),
       });
     }

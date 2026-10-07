@@ -11,7 +11,7 @@ export function visitFingerprint(input: VisitInput): string {
     topicIds: [...input.topicIds].sort(byNumber),
     checks: [...input.checks]
       .sort((a, b) => a.checklistItemId - b.checklistItemId)
-      .map((c) => [c.topicId, c.checklistItemId, c.unclear]),
+      .map((c) => [c.topicId, c.checklistItemId, c.unclear, c.shownVersion]),
     temperature: input.temperature,
     actions: [...input.actions]
       .sort((a, b) => a.kind.localeCompare(b.kind))

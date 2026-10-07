@@ -29,8 +29,8 @@ let eventId: number;
 // 境界の確かめ用の、もう1つの店
 let otherStoreId: number;
 let otherStaffId: number;
-let mnp: { id: number; items: { id: number }[] };
-let hikari: { id: number; items: { id: number }[] };
+let mnp: { id: number; items: { id: number; version: number }[] };
+let hikari: { id: number; items: { id: number; version: number }[] };
 
 const jst = (s: string) => new Date(`${s}+09:00`);
 
@@ -40,7 +40,7 @@ function input(over: Partial<VisitInput> = {}): VisitInput {
     staffId: 0,
     customer: { kind: "new", nameKana: "テスト タロウ", phoneLast4: "9999" },
     topicIds: [mnp.id],
-    checks: [{ topicId: mnp.id, checklistItemId: mnp.items[0].id, unclear: false }],
+    checks: [{ topicId: mnp.id, checklistItemId: mnp.items[0].id, unclear: false, shownVersion: mnp.items[0].version }],
     temperature: "CONSIDERING",
     actions: [{ kind: "QUOTE", note: null }],
     nextVisitDate: null,
@@ -62,12 +62,12 @@ beforeAll(async () => {
 
   const store = await prisma.store.create({ data: { name: "自動テスト用の店" } });
   storeId = store.id;
-  regularId = (await prisma.staff.create({ data: { storeId, name: "試験 常勤", role: "REGULAR" } })).id;
-  eventId = (await prisma.staff.create({ data: { storeId, name: "試験 イベント", role: "EVENT" } })).id;
+  regularId = (await prisma.staff.create({ data: { storeId, name: "試験 常勤", displayName: "試験 常勤", role: "REGULAR" } })).id;
+  eventId = (await prisma.staff.create({ data: { storeId, name: "試験 イベント", displayName: "試験 イベント", role: "EVENT" } })).id;
 
   otherStoreId = (await prisma.store.create({ data: { name: "自動テスト用の別の店" } })).id;
   otherStaffId = (
-    await prisma.staff.create({ data: { storeId: otherStoreId, name: "別店 常勤", role: "REGULAR" } })
+    await prisma.staff.create({ data: { storeId: otherStoreId, name: "別店 常勤", displayName: "別店 常勤", role: "REGULAR" } })
   ).id;
 });
 
@@ -191,7 +191,7 @@ describe("DBの制約が守っていること", () => {
         regularId,
         input({
           customer: { kind: "new", nameKana: "シッパイ ゴロウ", phoneLast4: "5555" },
-          checks: [{ topicId: hikari.id, checklistItemId: hikari.items[0].id, unclear: false }],
+          checks: [{ topicId: hikari.id, checklistItemId: hikari.items[0].id, unclear: false, shownVersion: hikari.items[0].version }],
         }),
       ),
     ).rejects.toThrow();
@@ -300,7 +300,7 @@ describe("二重送信", () => {
 
 describe("記録時点の役割と、記録の出どころ", () => {
   it("イベントスタッフが後で常勤になっても、過去の記録の印と集計は変わらない", async () => {
-    const temp = await prisma.staff.create({ data: { storeId, name: "試験 のちに常勤", role: "EVENT" } });
+    const temp = await prisma.staff.create({ data: { storeId, name: "試験 のちに常勤", displayName: "試験 のちに常勤", role: "EVENT" } });
     const { customerId } = await createVisit(
       storeId,
       temp.id,
@@ -360,7 +360,7 @@ describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
         regularId,
         input({
           customer: { kind: "new", nameKana: "ゲンバ ハンダン", phoneLast4: "8080" },
-          checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false }],
+          checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false, shownVersion: camp.contentVersion }],
           actions: [{ kind: "STOCK", note: null }],
         }),
         jst("2026-09-20T12:00:00"),
@@ -371,7 +371,7 @@ describe("現場の判断(問1〜3)を、DBの記録から通しで", () => {
         eventId,
         input({
           customer: { kind: "existing", id: customerId },
-          checks: [{ topicId: mnp.id, checklistItemId: price.id, unclear: true }],
+          checks: [{ topicId: mnp.id, checklistItemId: price.id, unclear: true, shownVersion: price.contentVersion }],
           actions: [{ kind: "QUOTE", note: null }],
         }),
         jst("2026-09-27T12:00:00"),
@@ -450,15 +450,67 @@ describe("2周目の審査の直し", () => {
       regularId,
       input({
         customer: { kind: "new", nameKana: "バン ノコス", phoneLast4: "1515" },
-        checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false }],
+        checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false, shownVersion: camp.contentVersion }],
       }),
     );
     const check = await prisma.visitCheck.findFirstOrThrow({ where: { visitId } });
     expect(check.explainedVersion).toBe(camp.contentVersion);
   });
 
-  it("同じ名前のスタッフを同じ店に登録できる(名前の一意制約を外した)", async () => {
-    await prisma.staff.create({ data: { storeId, name: "同名 太郎", role: "REGULAR" } });
-    await expect(prisma.staff.create({ data: { storeId, name: "同名 太郎", role: "EVENT" } })).resolves.toBeTruthy();
+  it("同じ名前のスタッフは登録できるが、呼び名は店内で重ならない", async () => {
+    await prisma.staff.create({ data: { storeId, name: "同名 太郎", displayName: "同名(早番)", role: "REGULAR" } });
+    await expect(
+      prisma.staff.create({ data: { storeId, name: "同名 太郎", displayName: "同名(遅番)", role: "EVENT" } }),
+    ).resolves.toBeTruthy();
+    // 呼び名が同じなら入らない
+    await expect(
+      prisma.staff.create({ data: { storeId, name: "別人 花子", displayName: "同名(早番)", role: "EVENT" } }),
+    ).rejects.toThrow();
+  });
+
+  it("同じ名前の2人でも、要約の担当と「◯◯さんに確認」は呼び名で見分けられる", async () => {
+    const a = await prisma.staff.create({ data: { storeId, name: "佐藤 光", displayName: "佐藤 光(104)", role: "REGULAR" } });
+    const b = await prisma.staff.create({ data: { storeId, name: "佐藤 光", displayName: "佐藤 光(204)", role: "REGULAR" } });
+    const { customerId } = await createVisit(
+      storeId,
+      a.id,
+      input({ customer: { kind: "new", nameKana: "ドウメイ カクニン", phoneLast4: "1616" }, actions: [{ kind: "STOCK", note: null }] }),
+      jst("2026-09-20T12:00:00"),
+    );
+    await createVisit(storeId, b.id, input({ customer: { kind: "existing", id: customerId }, actions: [] }), jst("2026-09-27T12:00:00"));
+    const catalog = await getCatalog();
+    const card = await getCustomerCard(storeId, customerId);
+    const text = buildHandoffSummary(toHandoffVisits(card!), catalog.checklist).text;
+    expect(text).toContain("佐藤 光(204)(常勤)");
+    expect(text).toContain("済んでいるか佐藤 光(104)さんに確認してから進める");
+  });
+});
+
+describe("説明した版(画面に出ていた版)", () => {
+  it("記録画面を開いたあとに中身が改定されたら、保存せず確かめ直してもらう(表示→改定→保存)", async () => {
+    const camp = await prisma.checklistItem.findFirstOrThrow({ where: { topicId: mnp.id, label: "キャンペーン" } });
+    // 1) 表示:画面に出ていた版を覚えておく
+    const shown = camp.contentVersion;
+    const inp = input({
+      customer: { kind: "new", nameKana: "カイテイ チュウ", phoneLast4: "1717" },
+      checks: [{ topicId: mnp.id, checklistItemId: camp.id, unclear: false, shownVersion: shown }],
+    });
+    try {
+      // 2) 改定:店長が中身を変えた
+      await prisma.checklistItem.update({ where: { id: camp.id }, data: { contentVersion: { increment: 1 } } });
+      // 3) 保存:画面に出ていた版と今の版が違うので断る。お客様も記録も作られない
+      await expect(createVisit(storeId, regularId, inp)).rejects.toThrow(
+        "「キャンペーン」の中身が変わりました。もう一度確認してから保存してください",
+      );
+      expect(await prisma.visit.count({ where: { requestId: inp.requestId } })).toBe(0);
+      expect(await searchCustomers(storeId, { kana: "カイテイ", last4: "1717" })).toHaveLength(0);
+
+      // 読み直して新しい版で送れば保存でき、説明した版として新しい版が残る
+      const again = { ...inp, requestId: randomUUID(), checks: [{ ...inp.checks[0], shownVersion: shown + 1 }] };
+      const { visitId } = await createVisit(storeId, regularId, again);
+      expect((await prisma.visitCheck.findFirstOrThrow({ where: { visitId } })).explainedVersion).toBe(shown + 1);
+    } finally {
+      await prisma.checklistItem.update({ where: { id: camp.id }, data: { contentVersion: camp.contentVersion } });
+    }
   });
 });

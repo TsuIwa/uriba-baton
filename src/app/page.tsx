@@ -38,7 +38,7 @@ function ActionList({ actions, canComplete }: { actions: OpenAction[]; canComple
             <div className="font-bold">{nextActionText(a.kind as NextActionKindCode, a.note)}</div>
             <div className="truncate text-xs text-slate-600">
               {a.visit.customer.nameKana}・{formatJstShort(a.visit.visitedAt)}{" "}
-              <StaffName name={a.visit.staff.name} role={a.visit.staffRoleAtVisit} />
+              <StaffName name={a.visit.staff.displayName} role={a.visit.staffRoleAtVisit} />
             </div>
           </Link>
           {canComplete ? <ActionDoneButton actionId={a.id} /> : null}
@@ -76,7 +76,7 @@ export default async function TodayPage() {
             <Pill key={t.topicId}>{t.topic.label}</Pill>
           ))}
           <span className="ml-1">
-            前回 <StaffName name={v.staff.name} role={v.staffRoleAtVisit} />
+            前回 <StaffName name={v.staff.displayName} role={v.staffRoleAtVisit} />
           </span>
         </div>
       </Link>

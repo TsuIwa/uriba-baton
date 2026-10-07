@@ -9,6 +9,8 @@ const DB_NAME = "uriba_migration_check";
 const MIGRATIONS = join(process.cwd(), "prisma", "migrations");
 /** ここまでが「旧版」(記録の出どころ・送信ID・記録時点の役割がまだ無い) */
 const OLD_VERSION_LAST = "20261006120037_kana_prefix_index";
+/** この版から、同じ名前のスタッフが入れられる(呼び名はまだ無い) */
+const SAME_NAME_ALLOWED = "20261007002000_version_fingerprint_nullable_seconds";
 
 function migrationDirs(): string[] {
   return readdirSync(MIGRATIONS, { withFileTypes: true })
@@ -67,8 +69,14 @@ describe("旧版の見本入りDBから上げる", () => {
     await db.query(`INSERT INTO visit_checks (visit_id, topic_id, checklist_item_id)
       VALUES ('22222222-2222-4222-8222-222222222222', 1, 1)`);
 
-    // 3) 残りを全部流す
-    for (const dir of dirs.slice(cut + 1)) await run(dir);
+    // 3) 同じ名前のスタッフが入れられる版まで流し、同じ名前の人を入れる
+    const mid = dirs.indexOf(SAME_NAME_ALLOWED);
+    expect(mid).toBeGreaterThan(cut);
+    for (const dir of dirs.slice(cut + 1, mid + 1)) await run(dir);
+    await db.query(`INSERT INTO staff (id, store_id, name, role) VALUES (3, 1, '旧 常勤', 'EVENT')`);
+
+    // 4) 残りを全部流す
+    for (const dir of dirs.slice(mid + 1)) await run(dir);
 
     // 既存の記録:出どころ不明・役割は今のスタッフの役割・送信IDあり・指紋は空・秒数はそのまま
     const v = (await db.query(`SELECT source, staff_role_at_visit, request_id, request_fingerprint, input_seconds FROM visits`)).rows[0];
@@ -91,7 +99,14 @@ describe("旧版の見本入りDBから上げる", () => {
       { source: "UNKNOWN", n: 1 },
     ]);
 
-    // 同じ名前のスタッフも入る(一意制約を外した)
-    await expect(db.query(`INSERT INTO staff (id, store_id, name, role) VALUES (3, 1, '旧 常勤', 'EVENT')`)).resolves.toBeTruthy();
+    // 既存のスタッフの呼び名は名前で埋まる
+    const names = (await db.query(`SELECT name, display_name FROM staff ORDER BY id`)).rows;
+    // 同じ名前が2人いたら、2人目からは「名前-ID」で重ならない
+    expect(names.map((r) => r.display_name)).toEqual(["旧 常勤", "旧 イベント", "旧 常勤-3"]);
+
+    // これから先も、呼び名は店内で重ならない
+    await expect(
+      db.query(`INSERT INTO staff (id, store_id, name, display_name, role) VALUES (4, 1, '別の人', '旧 常勤', 'EVENT')`),
+    ).rejects.toThrow();
   });
 });

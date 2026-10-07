@@ -36,6 +36,7 @@ export type ChecklistCatalog = Record<string, ChecklistItemInfo[]>;
 /** 要約に必要な、1回分の記録 */
 export type HandoffVisit = {
   visitedAt: Date;
+  /** name は画面に出す呼び名(店内で一意)。「◯◯さんに確認」もこれを使う */
   staff: { name: string; role: StaffRoleCode };
   temperature: TemperatureCode;
   topics: { code: string; label: string }[];

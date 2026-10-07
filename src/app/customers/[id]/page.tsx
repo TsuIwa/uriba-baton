@@ -45,7 +45,7 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
   const openActions = card.visits.flatMap((v) =>
     v.nextActions
       .filter((a) => a.doneAt === null)
-      .map((a) => ({ ...a, visitedAt: v.visitedAt, staffName: v.staff.name, stale: v.id !== latestVisitId })),
+      .map((a) => ({ ...a, visitedAt: v.visitedAt, staffName: v.staff.displayName, stale: v.id !== latestVisitId })),
   );
   const STATE_STYLE: Record<ItemState, string> = {
     NOT_YET: "bg-slate-100 text-slate-600",
@@ -164,7 +164,7 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
             <li key={v.id} className="border-l-4 border-brand-line pl-3">
               <div className="flex flex-wrap items-baseline gap-x-2 text-sm">
                 <span className="font-bold">{formatJstShort(v.visitedAt)}</span>
-                <StaffName name={v.staff.name} role={v.staffRoleAtVisit} />
+                <StaffName name={v.staff.displayName} role={v.staffRoleAtVisit} />
                 <span className="text-slate-600">{TEMPERATURE_LABEL[v.temperature as TemperatureCode]}</span>
                 <span className="ml-auto text-xs text-slate-400">
                   {v.source === "MANUAL"
@@ -195,7 +195,7 @@ export default async function CustomerCardPage({ params, searchParams }: Props) 
                       次: {nextActionText(a.kind as NextActionKindCode, a.note)}
                       {a.doneAt && a.doneBy ? (
                         <span className="ml-1 no-underline">
-                          ({formatJstShort(a.doneAt)} {a.doneBy.name} 済み)
+                          ({formatJstShort(a.doneAt)} {a.doneBy.displayName} 済み)
                         </span>
                       ) : null}
                     </li>

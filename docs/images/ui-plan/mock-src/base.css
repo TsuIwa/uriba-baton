@@ -1,0 +1,12 @@
+@import url('https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&display=swap');
+:root{--ji:#F3F5F8;--men:#FFFFFF;--moji:#17212B;--sub:#5B6878;--line:#D5DDE6;--ai:#16324F;--ai2:#E6EDF5;
+--shu:#D9480F;--shu2:#FFF0E8;--ki:#F2B705;--ki2:#FFF6D6;--kimoji:#5C4400;--ok:#3E6A8F;--ev:#0E7C86}
+*{box-sizing:border-box;margin:0;padding:0}
+body{width:390px;background:var(--ji);color:var(--moji);font-family:"BIZ UDPGothic","BIZ UDGothic","Hiragino Sans",sans-serif;font-size:16px;line-height:1.5;font-feature-settings:"tnum"}
+.top{background:var(--ai);color:#fff;height:48px;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font-size:13px}
+.top b{font-size:15px}
+.me{background:rgba(255,255,255,.12);border-radius:8px;padding:6px 10px;font-weight:700}
+.ev{display:inline-block;background:var(--ev);color:#fff;font-size:11px;font-weight:700;border-radius:4px;padding:1px 6px;margin-left:6px;vertical-align:2px}
+.sample{display:inline-block;border:1px dashed var(--sub);color:var(--sub);font-size:11px;border-radius:4px;padding:0 6px}
+.tab{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);height:64px;display:flex;align-items:center;justify-content:space-around;font-size:15px;font-weight:700;color:var(--sub)}
+.tab .rec{background:var(--ai);color:#fff;border-radius:12px;padding:12px 28px}

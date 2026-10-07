@@ -26,7 +26,7 @@ export default async function RecordPage({ searchParams }: Props) {
       // お客様が変わったらフォームを作り直して、秒数の計測もやり直す
       key={card?.id ?? "new"}
       topics={catalog.topics}
-      staffName={current ? `${current.name}${current.role === "EVENT" ? "(イベント)" : ""}` : null}
+      staffName={current ? `${current.displayName}${current.role === "EVENT" ? "(イベント)" : ""}` : null}
       staffId={current?.id ?? null}
       today={jstDateString(new Date())}
       initialCustomer={

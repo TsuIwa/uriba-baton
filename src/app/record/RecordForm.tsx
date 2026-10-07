@@ -4,13 +4,20 @@
 // 最初の入力(タップ・文字入力)から保存を押すまでの秒数を、記録と一緒に保存する。
 // 画面を開いた時からにしないのは、接客中に画面を開いたままにすることがあり、接客の時間が混ざるため。
 
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, useTransition } from "react";
 import { NEXT_ACTIONS, TEMPERATURES, type NextActionKindCode, type TemperatureCode } from "@/lib/catalog";
 import { addDays, formatYmdShort } from "@/lib/dates";
 import { elapsedSeconds, inputSeconds } from "@/lib/stats";
 import { findCustomers, saveVisit, type CustomerOption } from "../actions";
 
-type Topic = { id: number; code: string; label: string; items: { id: number; label: string }[] };
+type Topic = {
+  id: number;
+  code: string;
+  label: string;
+  /** version = 画面に出した時点の中身の版 */
+  items: { id: number; label: string; version: number }[];
+};
 
 type Props = {
   topics: Topic[];
@@ -162,6 +169,7 @@ export function RecordForm({
     if (startedAt.current === null && formValues !== initialValues.current) startedAt.current = Date.now();
   }, [formValues]);
 
+  const router = useRouter();
   const [errors, setErrors] = useState<string[]>([]);
   const [pending, startTransition] = useTransition();
 
@@ -201,6 +209,10 @@ export function RecordForm({
       topicIds,
       checklistItemIds: itemIds,
       unclearItemIds: unclearIds,
+      // 画面に出ていた版(=説明した版)。保存までに改定されていたらサーバーが断る
+      itemVersions: Object.fromEntries(
+        topics.flatMap((t) => t.items).filter((i) => itemIds.includes(i.id)).map((i) => [i.id, i.version]),
+      ),
       temperature,
       actions,
       otherNote,
@@ -215,6 +227,8 @@ export function RecordForm({
         setErrors(result.errors);
         // 同じ送信IDで中身が変わっていると断られたら、次の保存は新しい記録として送る
         if (result.code === "REQUEST_CONFLICT") requestId.current = crypto.randomUUID();
+        // 中身が改定されていたら、新しい版を読み直す(入れた内容はそのまま残る)
+        if (result.code === "CONTENT_CHANGED") router.refresh();
       }
     });
   }
