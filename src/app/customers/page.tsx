@@ -3,7 +3,7 @@ import Link from "next/link";
 import { formatJstShort } from "@/lib/dates";
 import { parseCustomerQuery } from "@/lib/kana";
 import { getStore, searchCustomers } from "@/lib/queries";
-import { Pill, Section, StaffName } from "../_components/ui";
+import { Section, StaffName, Tag } from "../_components/ui";
 
 type Props = { searchParams: Promise<{ q?: string | string[] }> };
 
@@ -21,47 +21,47 @@ export default async function CustomersPage({ searchParams }: Props) {
   }`;
 
   return (
-    <div className="space-y-3">
-      <form role="search" className="flex gap-2">
+    <div className="space-y-3 pt-3">
+      <form role="search" className="flex gap-2 px-4">
         <input
           name="q"
           defaultValue={text}
           placeholder="カナ か 下4桁(例: やまだ 1234)"
           autoComplete="off"
           enterKeyHint="search"
-          className="min-h-12 w-full rounded-xl border border-brand-line bg-white px-3 text-base"
+          className="min-h-12 w-full min-w-0 rounded-[10px] border border-baton-line-strong bg-baton-men px-3 text-base"
           aria-label="お客様を探す"
         />
-        <button type="submit" className="min-h-12 shrink-0 rounded-xl bg-brand px-4 font-bold text-white">
+        <button type="submit" className="min-h-12 shrink-0 rounded-[10px] bg-baton-ai px-4 font-bold text-baton-on-ai active:bg-baton-ai-press">
           探す
         </button>
       </form>
 
       <Section title={searched ? `見つかったお客様` : "最近来店したお客様"} note={`${rows.length}人`}>
         {rows.length === 0 ? (
-          <p className="text-sm text-slate-500">見つかりませんでした。</p>
+          <p className="py-2 text-[15px] text-baton-sub">見つかりませんでした。</p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="divide-y divide-baton-line">
             {rows.map((c) => {
               const last = c.visits[0];
               return (
                 <li key={c.id}>
                   <Link
                     href={`/customers/${c.id}`}
-                    className="block rounded-xl border border-brand-line p-3 active:bg-brand-soft"
+                    className="block min-h-14 py-2.5 active:bg-baton-ji"
                   >
                     <div className="flex items-baseline justify-between">
                       <span className="text-lg font-bold">{c.nameKana}</span>
-                      <span className="text-xs text-slate-500">下4桁 {c.phoneLast4}</span>
+                      <span className="text-[13px] text-baton-sub tabular-nums">下4桁 {c.phoneLast4}</span>
                     </div>
                     {last ? (
-                      <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-slate-600">
+                      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[13px] text-baton-sub">
                         <span>前回 {formatJstShort(last.visitedAt)}</span>
                         <StaffName name={last.staff.displayName} role={last.staffRoleAtVisit} />
                         {last.topics
                           .toSorted((a, b) => a.topic.sortOrder - b.topic.sortOrder)
                           .map((t) => (
-                            <Pill key={t.topic.label}>{t.topic.label}</Pill>
+                            <Tag key={t.topic.label}>{t.topic.label}</Tag>
                           ))}
                       </div>
                     ) : null}
@@ -75,7 +75,7 @@ export default async function CustomersPage({ searchParams }: Props) {
 
       <Link
         href={newHref}
-        className="flex min-h-14 items-center justify-center rounded-xl border-2 border-dashed border-brand text-base font-bold text-brand"
+        className="mx-4 flex min-h-14 items-center justify-center rounded-xl border-2 border-baton-ai bg-baton-men text-base font-bold text-baton-ai active:bg-baton-ji"
       >
         ＋ 新規のお客様として記録する
       </Link>
