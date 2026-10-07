@@ -27,11 +27,15 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
   await page.getByRole("button", { name: "＋ 新規のお客様" }).click();
   await page.getByLabel("お名前カナ").fill(nameKana.replace("エトウ", "えとう"));
   await page.getByLabel("電話番号の下4桁").fill(last4);
+  // 記録は段ごとに開く(07 §2-2)。文字を打った段と、複数選べる段は「次へ」で進む
+  await page.getByRole("button", { name: "次へ" }).click();
   await page.getByRole("button", { name: "のりかえ(MNP)" }).click();
-  await page.getByRole("button", { name: "料金比較" }).click();
-  await page.getByRole("button", { name: "端末価格", exact: true }).click();
-  // 端末価格は、お客様の理解があいまいだった
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByRole("button", { name: "料金比較を説明済み" }).click();
+  // 端末価格は、お客様の理解があいまいだった(あいまいを押すと説明済みにも記録される)
   await page.getByRole("button", { name: "端末価格の理解があいまい" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
+  // 温度感は押すと自動で次の段へ進む
   await page.getByRole("button", { name: "他社と比較中" }).click();
   await page.getByRole("button", { name: "見積もりを渡す" }).click();
   await page.getByRole("button", { name: "明日" }).click();
@@ -58,13 +62,16 @@ test("イベントスタッフの記録を、常勤が続きから引き継げ�
   await expect(page.getByTestId("handoff-summary")).toContainText("森田 陽菜(イベント)");
 
   // 約束していた見積もりは済みにする
-  await page.getByRole("button", { name: "済み" }).first().click();
-  await expect(page.getByRole("button", { name: "済み" })).toHaveCount(0);
+  await page.getByRole("button", { name: "済み", exact: true }).first().click();
+  await expect(page.getByRole("button", { name: "済み", exact: true })).toHaveCount(0);
 
   // 続きを記録(前回の用件は最初から選ばれている)
   await page.getByRole("link", { name: "このお客様の記録を残す" }).click();
-  await expect(page.getByRole("button", { name: "のりかえ(MNP)" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByRole("button", { name: "下取り" }).click();
+  // 用件の段は済んだ1行に畳まれて、前回の用件が入っている
+  await expect(page.getByTestId("step-2")).toContainText("のりかえ(MNP)");
+  await expect(page.getByTestId("step-3")).toHaveAttribute("aria-current", "step");
+  await page.getByRole("button", { name: "下取りを説明済み" }).click();
+  await page.getByRole("button", { name: "次へ" }).click();
   await page.getByRole("button", { name: "前向き" }).click();
   await page.screenshot({ path: "test-results/02_記録画面.png", fullPage: true });
   await page.getByRole("button", { name: "保存する" }).click();
@@ -109,6 +116,7 @@ test("別のタブで担当者を替えたら、記録画面の保存は断っ�
   await page.getByRole("link", { name: /ハヤシ ソウタ/ }).click();
   await page.getByRole("link", { name: "このお客様の記録を残す" }).click();
   await expect(page.getByText("担当:")).toContainText("高橋 恵");
+  await page.getByRole("button", { name: "次へ" }).click();
   await page.getByRole("button", { name: "検討中" }).click();
 
   // 別のタブで「今のスタッフ」を替える(この画面には高橋 恵のまま出ている)
